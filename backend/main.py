@@ -604,6 +604,365 @@ async def execute_sell_trade(user_id: int, symbol: str, quantity: float, price: 
     
     return {"success": True, "trade_id": new_id, "total_amount": total}
 
+# Notifications
+class Notification(BaseModel):
+    id: int
+    user_id: int
+    title: str
+    message: str
+    type: str  # order, message, follow, trading, review
+    read: bool
+    created_at: str
+
+class Review(BaseModel):
+    id: int
+    product_id: int
+    user_id: int
+    username: str
+    rating: int  # 1-5
+    comment: str
+    helpful_count: int
+    created_at: str
+
+class Wishlist(BaseModel):
+    id: int
+    user_id: int
+    product_id: int
+    added_at: str
+
+class Wallet(BaseModel):
+    id: int
+    user_id: int
+    balance: float
+    total_spent: float
+    total_earned: float
+    created_at: str
+
+class ChatMessage(BaseModel):
+    id: int
+    user_id: int
+    seller_id: int
+    message: str
+    timestamp: str
+    read: bool
+
+class Follow(BaseModel):
+    id: int
+    follower_id: int
+    following_id: int
+    created_at: str
+
+class Cryptocurrency(BaseModel):
+    id: int
+    symbol: str
+    name: str
+    price: float
+    change: float
+    change_percent: float
+    market_cap: str
+    volume: str
+
+class CopyTrade(BaseModel):
+    id: int
+    trader_id: int
+    trader_name: str
+    followers: int
+    win_rate: float
+    roi: float
+    total_trades: int
+    created_at: str
+
+class LoyaltyPoint(BaseModel):
+    id: int
+    user_id: int
+    points: int
+    tier: str  # bronze, silver, gold, platinum
+    created_at: str
+
+class Analytics(BaseModel):
+    id: int
+    user_id: int
+    type: str  # seller_sales, user_spending, trade_performance
+    data: dict
+    timestamp: str
+
+class Settings(BaseModel):
+    id: int
+    user_id: int
+    dark_mode: bool
+    language: str  # en, es, fr, de, zh
+    notifications_enabled: bool
+    created_at: str
+
+# Mock Data
+NOTIFICATIONS = [
+    {"id": 1, "user_id": 1, "title": "Order Confirmed", "message": "Your order #101 has been confirmed", "type": "order", "read": False, "created_at": "2026-02-22T09:00:00"},
+    {"id": 2, "user_id": 1, "title": "New Follower", "message": "jane_smith started following you", "type": "follow", "read": True, "created_at": "2026-02-22T08:30:00"},
+    {"id": 3, "user_id": 1, "title": "Trade Alert", "message": "Your stock AAPL gained 5%", "type": "trading", "read": False, "created_at": "2026-02-22T08:00:00"},
+]
+
+REVIEWS = [
+    {"id": 1, "product_id": 1, "user_id": 2, "username": "jane_smith", "rating": 5, "comment": "Excellent quality, fast shipping!", "helpful_count": 12, "created_at": "2026-02-20"},
+    {"id": 2, "product_id": 1, "user_id": 3, "username": "mike_tech", "rating": 4, "comment": "Good product, packaging could be better", "helpful_count": 8, "created_at": "2026-02-19"},
+]
+
+WISHLISTS = [
+    {"id": 1, "user_id": 1, "product_id": 2, "added_at": "2026-02-21"},
+    {"id": 2, "user_id": 1, "product_id": 3, "added_at": "2026-02-20"},
+]
+
+WALLETS = [
+    {"id": 1, "user_id": 1, "balance": 2500.50, "total_spent": 5200.00, "total_earned": 1200.00, "created_at": "2026-01-01"},
+    {"id": 2, "user_id": 2, "balance": 3100.00, "total_spent": 4500.00, "total_earned": 3500.00, "created_at": "2026-01-01"},
+]
+
+CHAT_MESSAGES = [
+    {"id": 1, "user_id": 1, "seller_id": 101, "message": "Is this product available?", "timestamp": "2026-02-22T10:00:00", "read": True},
+    {"id": 2, "user_id": 1, "seller_id": 101, "message": "Yes, it's in stock!", "timestamp": "2026-02-22T10:05:00", "read": False},
+]
+
+FOLLOWS = [
+    {"id": 1, "follower_id": 1, "following_id": 2, "created_at": "2026-02-18"},
+    {"id": 2, "follower_id": 1, "following_id": 3, "created_at": "2026-02-17"},
+    {"id": 3, "follower_id": 2, "following_id": 1, "created_at": "2026-02-16"},
+]
+
+CRYPTOCURRENCIES = [
+    {"id": 1, "symbol": "BTC", "name": "Bitcoin", "price": 43560.00, "change": 1250.00, "change_percent": 2.96, "market_cap": "$850B", "volume": "$28B"},
+    {"id": 2, "symbol": "ETH", "name": "Ethereum", "price": 2280.50, "change": 85.50, "change_percent": 3.89, "market_cap": "$273B", "volume": "$12B"},
+    {"id": 3, "symbol": "XRP", "name": "Ripple", "price": 2.45, "change": -0.05, "change_percent": -2.0, "market_cap": "$130B", "volume": "$2.5B"},
+    {"id": 4, "symbol": "ADA", "name": "Cardano", "price": 0.95, "change": 0.02, "change_percent": 2.15, "market_cap": "$35B", "volume": "$500M"},
+]
+
+COPY_TRADERS = [
+    {"id": 1, "trader_id": 101, "trader_name": "Pro_Trader_Mike", "followers": 1250, "win_rate": 82.5, "roi": 185.3, "total_trades": 320, "created_at": "2025-06-01"},
+    {"id": 2, "trader_id": 102, "trader_name": "Sarah_FX_Expert", "followers": 890, "win_rate": 76.2, "roi": 142.8, "total_trades": 215, "created_at": "2025-08-15"},
+    {"id": 3, "trader_id": 103, "trader_name": "Crypto_King_Alex", "followers": 2100, "win_rate": 71.5, "roi": 298.5, "total_trades": 450, "created_at": "2025-04-20"},
+]
+
+LOYALTY_POINTS = [
+    {"id": 1, "user_id": 1, "points": 2850, "tier": "gold", "created_at": "2026-01-01"},
+    {"id": 2, "user_id": 2, "points": 1200, "tier": "silver", "created_at": "2026-01-01"},
+    {"id": 3, "user_id": 3, "points": 5600, "tier": "platinum", "created_at": "2026-01-01"},
+]
+
+ANALYTICS_DATA = [
+    {"id": 1, "user_id": 101, "type": "seller_sales", "data": {"total_sales": 15000, "orders": 342, "revenue": 8500, "avg_rating": 4.7}, "timestamp": "2026-02-22"},
+    {"id": 2, "user_id": 1, "type": "user_spending", "data": {"total_spent": 5200, "orders": 28, "avg_order": 185.71, "favorite_category": "Electronics"}, "timestamp": "2026-02-22"},
+    {"id": 3, "user_id": 1, "type": "trade_performance", "data": {"total_trades": 45, "win_trades": 32, "loss_trades": 13, "roi": 18.5}, "timestamp": "2026-02-22"},
+]
+
+SETTINGS_DATA = [
+    {"id": 1, "user_id": 1, "dark_mode": False, "language": "en", "notifications_enabled": True, "created_at": "2026-01-01"},
+    {"id": 2, "user_id": 2, "dark_mode": True, "language": "es", "notifications_enabled": True, "created_at": "2026-01-01"},
+]
+
+# Notification endpoints
+@app.get("/notifications/{user_id}")
+async def get_notifications(user_id: int):
+    return [n for n in NOTIFICATIONS if n["user_id"] == user_id]
+
+@app.post("/notifications/{user_id}/read/{notification_id}")
+async def mark_notification_read(user_id: int, notification_id: int):
+    for notif in NOTIFICATIONS:
+        if notif["id"] == notification_id and notif["user_id"] == user_id:
+            notif["read"] = True
+            return {"success": True}
+    return {"error": "Notification not found"}
+
+@app.get("/notifications/{user_id}/unread-count")
+async def get_unread_count(user_id: int):
+    count = len([n for n in NOTIFICATIONS if n["user_id"] == user_id and not n["read"]])
+    return {"unread_count": count}
+
+# Review endpoints
+@app.get("/products/{product_id}/reviews")
+async def get_product_reviews(product_id: int):
+    return [r for r in REVIEWS if r["product_id"] == product_id]
+
+@app.post("/products/{product_id}/reviews")
+async def add_review(product_id: int, user_id: int, username: str, rating: int, comment: str):
+    new_id = max([r["id"] for r in REVIEWS]) + 1 if REVIEWS else 1
+    review = {"id": new_id, "product_id": product_id, "user_id": user_id, "username": username, "rating": rating, "comment": comment, "helpful_count": 0, "created_at": "2026-02-22"}
+    REVIEWS.append(review)
+    return {"success": True, "review_id": new_id}
+
+@app.post("/reviews/{review_id}/helpful")
+async def mark_review_helpful(review_id: int):
+    for review in REVIEWS:
+        if review["id"] == review_id:
+            review["helpful_count"] += 1
+            return {"success": True, "helpful_count": review["helpful_count"]}
+    return {"error": "Review not found"}
+
+# Wishlist endpoints
+@app.get("/wishlists/{user_id}")
+async def get_wishlist(user_id: int):
+    wishlist_items = [w for w in WISHLISTS if w["user_id"] == user_id]
+    result = []
+    for item in wishlist_items:
+        for product in PRODUCTS:
+            if product.id == item["product_id"]:
+                result.append({**item, "product": product})
+    return result
+
+@app.post("/wishlists/{user_id}/add/{product_id}")
+async def add_to_wishlist(user_id: int, product_id: int):
+    if not any(w["user_id"] == user_id and w["product_id"] == product_id for w in WISHLISTS):
+        new_id = max([w["id"] for w in WISHLISTS]) + 1 if WISHLISTS else 1
+        wishlist = {"id": new_id, "user_id": user_id, "product_id": product_id, "added_at": "2026-02-22"}
+        WISHLISTS.append(wishlist)
+        return {"success": True, "wishlist_id": new_id}
+    return {"error": "Already in wishlist"}
+
+@app.delete("/wishlists/{user_id}/remove/{product_id}")
+async def remove_from_wishlist(user_id: int, product_id: int):
+    global WISHLISTS
+    WISHLISTS = [w for w in WISHLISTS if not (w["user_id"] == user_id and w["product_id"] == product_id)]
+    return {"success": True}
+
+# Wallet endpoints
+@app.get("/wallet/{user_id}")
+async def get_wallet(user_id: int):
+    for wallet in WALLETS:
+        if wallet["user_id"] == user_id:
+            return wallet
+    return {"error": "Wallet not found"}
+
+@app.post("/wallet/{user_id}/deposit")
+async def deposit_to_wallet(user_id: int, amount: float):
+    for wallet in WALLETS:
+        if wallet["user_id"] == user_id:
+            wallet["balance"] += amount
+            wallet["total_earned"] += amount
+            return {"success": True, "new_balance": wallet["balance"]}
+    return {"error": "Wallet not found"}
+
+@app.post("/wallet/{user_id}/withdraw")
+async def withdraw_from_wallet(user_id: int, amount: float):
+    for wallet in WALLETS:
+        if wallet["user_id"] == user_id:
+            if wallet["balance"] >= amount:
+                wallet["balance"] -= amount
+                wallet["total_spent"] += amount
+                return {"success": True, "new_balance": wallet["balance"]}
+            return {"error": "Insufficient balance"}
+    return {"error": "Wallet not found"}
+
+# Chat endpoints
+@app.get("/chat/{user_id}/{seller_id}")
+async def get_chat(user_id: int, seller_id: int):
+    return [m for m in CHAT_MESSAGES if (m["user_id"] == user_id and m["seller_id"] == seller_id)]
+
+@app.post("/chat/{user_id}/{seller_id}/send")
+async def send_chat_message(user_id: int, seller_id: int, message: str):
+    new_id = max([m["id"] for m in CHAT_MESSAGES]) + 1 if CHAT_MESSAGES else 1
+    msg = {"id": new_id, "user_id": user_id, "seller_id": seller_id, "message": message, "timestamp": "2026-02-22T10:00:00", "read": False}
+    CHAT_MESSAGES.append(msg)
+    return {"success": True, "message_id": new_id}
+
+# Follow endpoints
+@app.get("/followers/{user_id}")
+async def get_followers(user_id: int):
+    return [f for f in FOLLOWS if f["following_id"] == user_id]
+
+@app.get("/following/{user_id}")
+async def get_following(user_id: int):
+    return [f for f in FOLLOWS if f["follower_id"] == user_id]
+
+@app.post("/follow/{follower_id}/{following_id}")
+async def follow_user(follower_id: int, following_id: int):
+    if not any(f["follower_id"] == follower_id and f["following_id"] == following_id for f in FOLLOWS):
+        new_id = max([f["id"] for f in FOLLOWS]) + 1 if FOLLOWS else 1
+        follow = {"id": new_id, "follower_id": follower_id, "following_id": following_id, "created_at": "2026-02-22"}
+        FOLLOWS.append(follow)
+        return {"success": True, "follow_id": new_id}
+    return {"error": "Already following"}
+
+@app.delete("/unfollow/{follower_id}/{following_id}")
+async def unfollow_user(follower_id: int, following_id: int):
+    global FOLLOWS
+    FOLLOWS = [f for f in FOLLOWS if not (f["follower_id"] == follower_id and f["following_id"] == following_id)]
+    return {"success": True}
+
+# Cryptocurrency endpoints
+@app.get("/crypto")
+async def get_cryptocurrencies():
+    return CRYPTOCURRENCIES
+
+@app.get("/crypto/{crypto_id}")
+async def get_crypto(crypto_id: int):
+    for crypto in CRYPTOCURRENCIES:
+        if crypto["id"] == crypto_id:
+            return crypto
+    return {"error": "Crypto not found"}
+
+@app.post("/crypto/trade/buy")
+async def buy_crypto(user_id: int, symbol: str, quantity: float, price: float):
+    total = quantity * price
+    if user_id in PORTFOLIOS:
+        PORTFOLIOS[user_id]["cash"] -= total
+        PORTFOLIOS[user_id]["total_value"] -= total
+    return {"success": True, "symbol": symbol, "quantity": quantity, "total": total}
+
+# Copy Trading endpoints
+@app.get("/copy-traders")
+async def get_copy_traders():
+    return COPY_TRADERS
+
+@app.post("/copy-traders/{trader_id}/follow")
+async def follow_copy_trader(user_id: int, trader_id: int):
+    return {"success": True, "message": f"Now copying trades from trader {trader_id}"}
+
+# Loyalty endpoints
+@app.get("/loyalty/{user_id}")
+async def get_loyalty_points(user_id: int):
+    for lp in LOYALTY_POINTS:
+        if lp["user_id"] == user_id:
+            return lp
+    return {"error": "Loyalty points not found"}
+
+@app.post("/loyalty/{user_id}/add-points")
+async def add_loyalty_points(user_id: int, points: int):
+    for lp in LOYALTY_POINTS:
+        if lp["user_id"] == user_id:
+            lp["points"] += points
+            if lp["points"] >= 5000:
+                lp["tier"] = "platinum"
+            elif lp["points"] >= 3000:
+                lp["tier"] = "gold"
+            elif lp["points"] >= 1000:
+                lp["tier"] = "silver"
+            return {"success": True, "new_points": lp["points"], "tier": lp["tier"]}
+    return {"error": "User not found"}
+
+# Analytics endpoints
+@app.get("/analytics/{user_id}/{analytics_type}")
+async def get_analytics(user_id: int, analytics_type: str):
+    analytics = [a for a in ANALYTICS_DATA if a["user_id"] == user_id and a["type"] == analytics_type]
+    return analytics if analytics else {"error": "Analytics not found"}
+
+# Settings endpoints
+@app.get("/settings/{user_id}")
+async def get_settings(user_id: int):
+    for setting in SETTINGS_DATA:
+        if setting["user_id"] == user_id:
+            return setting
+    return {"error": "Settings not found"}
+
+@app.post("/settings/{user_id}/update")
+async def update_settings(user_id: int, dark_mode: bool = None, language: str = None, notifications_enabled: bool = None):
+    for setting in SETTINGS_DATA:
+        if setting["user_id"] == user_id:
+            if dark_mode is not None:
+                setting["dark_mode"] = dark_mode
+            if language is not None:
+                setting["language"] = language
+            if notifications_enabled is not None:
+                setting["notifications_enabled"] = notifications_enabled
+            return {"success": True, "settings": setting}
+    return {"error": "Settings not found"}
+
 # Root endpoint
 @app.get("/")
 async def root():
