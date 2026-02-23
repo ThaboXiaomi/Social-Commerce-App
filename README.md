@@ -175,7 +175,17 @@ The app comes with mock data including:
 ### SDK & Dependencies Upgrade
 - ✅ Upgraded Expo from SDK 51 to **SDK 54**
 - ✅ Updated React Native from 0.74.5 to **0.76.0**
+- ✅ Added `babel-preset-expo` 54.0.0 for proper Babel configuration
+- ✅ Fixed TypeScript configuration for Expo SDK 54
+- ✅ Updated `app.json` with Expo 54 configuration
+- ✅ Updated npm scripts to use `npx expo` for cross-platform compatibility
 - ✅ Improved performance and compatibility with latest React Native features
+
+### Configuration Changes
+- **app.json**: Added SDK version, platforms, Android/iOS specific settings
+- **package.json**: Fixed npm scripts to use `npx expo` instead of direct expo command
+- **tsconfig.json**: Enhanced TypeScript compiler options (jsx, esModuleInterop, etc.)
+- **babel.config.js**: Using babel-preset-expo for proper Expo support
 
 ## Features Roadmap
 

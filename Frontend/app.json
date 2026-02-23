@@ -1,7 +1,24 @@
 {
   "expo": {
-    "name": "Frontend",
-    "slug": "frontend",
-    "version": "1.0.0"
+    "name": "Social Commerce",
+    "slug": "social-commerce",
+    "version": "1.1.0",
+    "sdkVersion": "54.0.0",
+    "scheme": "socialcommerce",
+    "platforms": ["android", "ios", "web"],
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.socialcommerce"
+    },
+    "ios": {
+      "supportsTabletMode": true,
+      "bundleIdentifier": "com.socialcommerce"
+    },
+    "plugins": [
+      ["expo-router", { "origin": false }]
+    ]
   }
 }

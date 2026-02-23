@@ -261,9 +261,9 @@ function SplashScreen() {
   return (
     <View style={styles.splashContainer}>
       <Animated.View style={[styles.logoContainer, {transform: [{scale: scaleAnim}], opacity: opacityAnim}]}>
-        <Text style={styles.appLogo}>✨</Text>
+        <Text style={styles.appLogo}>*</Text>
         <Text style={styles.appName}>UniHub</Text>
-        <Text style={styles.appTagline}>Social • Commerce • Trading</Text>
+        <Text style={styles.appTagline}>Social . Commerce . Trading</Text>
       </Animated.View>
     </View>
   );
@@ -303,7 +303,7 @@ function AuthenticationScreen({onLoginSuccess}: {onLoginSuccess: () => void}) {
       <Animated.View style={[styles.authContent, {transform: [{translateY: slideAnim}]}]}>
         {/* Header */}
         <View style={styles.authHeader}>
-          <Text style={styles.authTitle}>✨ UniHub</Text>
+          <Text style={styles.authTitle}>UniHub</Text>
           <Text style={styles.authSubtitle}>{hasAccount ? 'Welcome Back' : 'Join Us'}</Text>
         </View>
 
@@ -337,31 +337,31 @@ function AuthenticationScreen({onLoginSuccess}: {onLoginSuccess: () => void}) {
             <TouchableOpacity
               style={[styles.socialButton, styles.googleButton]}
               onPress={() => handleSocialLogin('Google')}>
-              <Text style={styles.socialIcon}>🔵</Text>
+              <Text style={styles.socialIcon}>G</Text>
               <Text style={styles.socialLabel}>Google</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.socialButton, styles.facebookButton]}
               onPress={() => handleSocialLogin('Facebook')}>
-              <Text style={styles.socialIcon}>📘</Text>
+              <Text style={styles.socialIcon}>f</Text>
               <Text style={styles.socialLabel}>Facebook</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.socialButton, styles.telegramButton]}
               onPress={() => handleSocialLogin('Telegram')}>
-              <Text style={styles.socialIcon}>✈️</Text>
+              <Text style={styles.socialIcon}>T</Text>
               <Text style={styles.socialLabel}>Telegram</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.socialButton, styles.vkButton]}
               onPress={() => handleSocialLogin('VK')}>
-              <Text style={styles.socialIcon}>🔷</Text>
+              <Text style={styles.socialIcon}>VK</Text>
               <Text style={styles.socialLabel}>VK</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.socialButton, styles.appleButton]}
               onPress={() => handleSocialLogin('Apple')}>
-              <Text style={styles.socialIcon}>🍎</Text>
+              <Text style={styles.socialIcon}>A</Text>
               <Text style={styles.socialLabel}>Apple</Text>
             </TouchableOpacity>
           </View>
@@ -387,7 +387,7 @@ function AppContent({onLogout}: {onLogout: () => void}) {
     username: 'john_doe',
     name: 'John Doe',
     avatar: 'https://via.placeholder.com/50',
-    bio: 'Travel enthusiast 🌍',
+    bio: 'Travel enthusiast',
     followers: 1250,
     following: 340,
   });
@@ -428,27 +428,27 @@ function AppContent({onLogout}: {onLogout: () => void}) {
         <TouchableOpacity
           style={[styles.navButton, currentScreen === 'feed' && styles.navActive]}
           onPress={() => setCurrentScreen('feed')}>
-          <Text style={currentScreen === 'feed' ? styles.navTextActive : styles.navText}>🏠</Text>
+          <Text style={currentScreen === 'feed' ? styles.navTextActive : styles.navText}>Home</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.navButton, currentScreen === 'stocks' && styles.navActive]}
           onPress={() => setCurrentScreen('stocks')}>
-          <Text style={currentScreen === 'stocks' ? styles.navTextActive : styles.navText}>📈</Text>
+          <Text style={currentScreen === 'stocks' ? styles.navTextActive : styles.navText}>Market</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.navButton, currentScreen === 'shop' && styles.navActive]}
           onPress={() => setCurrentScreen('shop')}>
-          <Text style={currentScreen === 'shop' ? styles.navTextActive : styles.navText}>🛍️</Text>
+          <Text style={currentScreen === 'shop' ? styles.navTextActive : styles.navText}>Shop</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.navButton, currentScreen === 'chat' && styles.navActive]}
           onPress={() => setCurrentScreen('chat')}>
-          <Text style={currentScreen === 'chat' ? styles.navTextActive : styles.navText}>💬</Text>
+          <Text style={currentScreen === 'chat' ? styles.navTextActive : styles.navText}>Chat</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.navButton, currentScreen === 'profile' && styles.navActive]}
           onPress={() => setCurrentScreen('profile')}>
-          <Text style={currentScreen === 'profile' ? styles.navTextActive : styles.navText}>👤</Text>
+          <Text style={currentScreen === 'profile' ? styles.navTextActive : styles.navText}>Profile</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -517,13 +517,13 @@ function FeedScreen() {
               <TouchableOpacity
                 style={styles.actionButton}
                 onPress={() => likePost(post.id)}>
-                <Text style={styles.actionText}>❤️ {post.likes}</Text>
+                <Text style={styles.actionText}>Like {post.likes}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.actionButton}>
-                <Text style={styles.actionText}>💬 {post.comments}</Text>
+                <Text style={styles.actionText}>Comment {post.comments}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.actionButton}>
-                <Text style={styles.actionText}>↗️ Share</Text>
+                <Text style={styles.actionText}>Share</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -700,7 +700,7 @@ function StocksScreen() {
   return (
     <ScrollView style={styles.screenContainer}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Stocks 📈</Text>
+        <Text style={styles.headerTitle}>Stocks</Text>
       </View>
 
       {/* Tabs */}
@@ -749,7 +749,7 @@ function StocksScreen() {
                   <View style={styles.stockPriceContainer}>
                     <Text style={styles.stockPrice}>${stock.price.toFixed(2)}</Text>
                     <Text style={[styles.stockChange, {color: stock.change > 0 ? '#25D366' : '#FF3B30'} as any]}>
-                      {stock.change > 0 ? '▲' : '▼'} {Math.abs(stock.change)}%
+                      {stock.change > 0 ? '+' : '-'} {Math.abs(stock.change)}%
                     </Text>
                   </View>
                 </View>
@@ -809,7 +809,7 @@ function ForexScreen() {
   return (
     <ScrollView style={styles.screenContainer}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Forex 💱</Text>
+        <Text style={styles.headerTitle}>Forex</Text>
       </View>
 
       {loading ? (
@@ -825,7 +825,7 @@ function ForexScreen() {
               <View style={styles.forexRateContainer}>
                 <Text style={styles.forexRate}>{pair.rate.toFixed(4)}</Text>
                 <Text style={[styles.forexChange, {color: pair.change > 0 ? '#25D366' : '#FF3B30'} as any]}>
-                  {pair.change > 0 ? '▲' : '▼'} {Math.abs(pair.change_percent).toFixed(2)}%
+                  {pair.change > 0 ? '+' : '-'} {Math.abs(pair.change_percent).toFixed(2)}%
                 </Text>
               </View>
             </View>
@@ -894,19 +894,19 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
           <TouchableOpacity
             style={[styles.shareButton, styles.telegramShare]}
             onPress={() => Alert.alert('Share', 'Profile shared to Telegram!')}>
-            <Text style={styles.shareIcon}>✈️</Text>
+            <Text style={styles.shareIcon}>TG</Text>
             <Text style={styles.shareLabel}>Telegram</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.shareButton, styles.vkShare]}
             onPress={() => Alert.alert('Share', 'Profile shared to VK!')}>
-            <Text style={styles.shareIcon}>🔷</Text>
+            <Text style={styles.shareIcon}>VK</Text>
             <Text style={styles.shareLabel}>VK</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.shareButton, styles.facebookShare]}
             onPress={() => Alert.alert('Share', 'Profile shared to Facebook!')}>
-            <Text style={styles.shareIcon}>📘</Text>
+            <Text style={styles.shareIcon}>FB</Text>
             <Text style={styles.shareLabel}>Facebook</Text>
           </TouchableOpacity>
         </View>
@@ -916,10 +916,10 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
         <Text style={styles.sectionTitle}>Recent Posts</Text>
         <View style={styles.postsList}>
           <TouchableOpacity style={styles.postPreview}>
-            <Text style={styles.postPreviewText}>📸 Post 1</Text>
+            <Text style={styles.postPreviewText}>Post 1</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.postPreview}>
-            <Text style={styles.postPreviewText}>📸 Post 2</Text>
+            <Text style={styles.postPreviewText}>Post 2</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1010,7 +1010,7 @@ function ShoppingScreen() {
           onSubmitEditing={handleSearch}
         />
         <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
-          <Text style={styles.searchButtonText}>🔍</Text>
+          <Text style={styles.searchButtonText}>Go</Text>
         </TouchableOpacity>
       </View>
 
@@ -1027,7 +1027,7 @@ function ShoppingScreen() {
                   <Image source={{uri: product.seller_avatar}} style={styles.sellerAvatar} />
                   <View>
                     <Text style={styles.sellerName}>{product.seller_name}</Text>
-                    <Text style={styles.rating}>⭐ {product.rating} ({product.reviews})</Text>
+                    <Text style={styles.rating}>* {product.rating} ({product.reviews})</Text>
                   </View>
                 </View>
 
@@ -1042,8 +1042,8 @@ function ShoppingScreen() {
                 </View>
 
                 <View style={styles.productMeta}>
-                  <Text style={styles.metaText}>📦 Sold: {product.sold}</Text>
-                  <Text style={styles.metaText}>⏱️ {product.estimated_delivery}</Text>
+                  <Text style={styles.metaText}>Sold: {product.sold}</Text>
+                  <Text style={styles.metaText}>ETA {product.estimated_delivery}</Text>
                 </View>
 
                 <TouchableOpacity
@@ -1132,7 +1132,7 @@ function CartScreen() {
         <Text style={styles.loadingText}>Loading cart...</Text>
       ) : cartItems.length === 0 ? (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyText}>🛒</Text>
+          <Text style={styles.emptyText}>Cart</Text>
           <Text style={styles.emptyTitle}>Your cart is empty</Text>
           <Text style={styles.emptyDesc}>Start shopping to add items</Text>
         </View>
@@ -1199,7 +1199,7 @@ function OrdersScreen() {
         <Text style={styles.loadingText}>Loading orders...</Text>
       ) : orders.length === 0 ? (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyText}>📦</Text>
+          <Text style={styles.emptyText}>Box</Text>
           <Text style={styles.emptyTitle}>No orders yet</Text>
           <Text style={styles.emptyDesc}>Your orders will appear here</Text>
         </View>
@@ -1376,7 +1376,7 @@ function WishlistScreen() {
               <Text style={styles.wishlistPrice}>${item.product?.price}</Text>
             </View>
             <TouchableOpacity onPress={() => removeFromWishlist(item.product_id)}>
-              <Text style={styles.removeButton}>❌</Text>
+              <Text style={styles.removeButton}>X</Text>
             </TouchableOpacity>
           </View>
         ))
@@ -1504,7 +1504,7 @@ function CryptoScreen() {
               <View style={styles.cryptoPriceContainer}>
                 <Text style={styles.cryptoPrice}>${crypto.price.toFixed(2)}</Text>
                 <Text style={[styles.cryptoChange, {color: crypto.change > 0 ? '#25D366' : '#FF3B30'} as any]}>
-                  {crypto.change > 0 ? '▲' : '▼'} {Math.abs(crypto.change_percent).toFixed(2)}%
+                  {crypto.change > 0 ? '+' : '-'} {Math.abs(crypto.change_percent).toFixed(2)}%
                 </Text>
               </View>
             </View>
@@ -1575,7 +1575,7 @@ function CopyTradingScreen() {
               </View>
             </View>
             <TouchableOpacity style={styles.copyButton} onPress={() => Alert.alert('Copying trades from ' + trader.trader_name)}>
-              <Text style={styles.copyButtonText}>📋 Copy</Text>
+              <Text style={styles.copyButtonText}>Copy</Text>
             </TouchableOpacity>
           </TouchableOpacity>
         ))
@@ -1618,7 +1618,7 @@ function LoyaltyScreen() {
         <>
           <View style={styles.loyaltyCard}>
             <Text style={[styles.tierBadge, {color: tierColors[loyalty.tier], fontSize: 48} as any]}>
-              ⭐ {loyalty.tier.toUpperCase()}
+              * {loyalty.tier.toUpperCase()}
             </Text>
             <Text style={styles.pointsDisplay}>{loyalty.points} Points</Text>
             <View style={styles.progressBar}>
@@ -1628,10 +1628,10 @@ function LoyaltyScreen() {
           </View>
           <View style={styles.benefitsSection}>
             <Text style={styles.sectionTitle}>Tier Benefits</Text>
-            <Text style={styles.benefitItem}>🎁 Exclusive discounts</Text>
-            <Text style={styles.benefitItem}>🚚 Free shipping</Text>
-            <Text style={styles.benefitItem}>💰 Cashback rewards</Text>
-            <Text style={styles.benefitItem}>⏰ Early access to sales</Text>
+            <Text style={styles.benefitItem}>- Exclusive discounts</Text>
+            <Text style={styles.benefitItem}>- Free shipping</Text>
+            <Text style={styles.benefitItem}>- Cashback rewards</Text>
+            <Text style={styles.benefitItem}>- Early access to sales</Text>
           </View>
         </>
       )}
@@ -1653,7 +1653,7 @@ function SettingsScreen({onScreenChange}: {onScreenChange: (screen: Screen) => v
         <Text style={styles.settingsSectionTitle}>Display</Text>
         <TouchableOpacity style={styles.settingsItem} onPress={() => setDarkMode(!darkMode)}>
           <Text style={styles.settingsLabel}>Dark Mode</Text>
-          <Text style={styles.toggleSwitch}>{darkMode ? '🔵' : '⚪'}</Text>
+          <Text style={styles.toggleSwitch}>{darkMode ? 'ON' : 'OFF'}</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.settingsSection}>
@@ -1664,19 +1664,19 @@ function SettingsScreen({onScreenChange}: {onScreenChange: (screen: Screen) => v
             style={[styles.settingsItem, language === lang && styles.settingsItemActive]}
             onPress={() => setLanguage(lang)}>
             <Text style={styles.settingsLabel}>{lang.toUpperCase()}</Text>
-            <Text>{language === lang ? '✓' : ''}</Text>
+            <Text>{language === lang ? 'v' : ''}</Text>
           </TouchableOpacity>
         ))}
       </View>
       <View style={styles.settingsSection}>
         <Text style={styles.settingsSectionTitle}>Account</Text>
         <TouchableOpacity style={styles.settingsItem} onPress={() => onScreenChange('followers')}>
-          <Text style={styles.settingsLabel}>👥 View Followers</Text>
-          <Text>→</Text>
+          <Text style={styles.settingsLabel}>View Followers</Text>
+          <Text>{'>'}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.settingsItem} onPress={() => onScreenChange('analytics')}>
-          <Text style={styles.settingsLabel}>📊 Analytics</Text>
-          <Text>→</Text>
+          <Text style={styles.settingsLabel}>Analytics</Text>
+          <Text>{'>'}</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>
