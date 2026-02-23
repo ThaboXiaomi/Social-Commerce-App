@@ -149,8 +149,9 @@ Bottom tab navigation:
 ## Technology Stack
 
 ### Frontend
-- React Native 0.83.1
-- TypeScript 5.8.3
+- React Native 0.76.0
+- Expo SDK 54
+- TypeScript 5.3.3
 - React Native Safe Area Context
 
 ### Backend
@@ -168,6 +169,13 @@ The app comes with mock data including:
 - **5 Forex Pairs** - EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CNY
 - **Sample Portfolio** - User with $50,000 portfolio containing stocks and forex positions
 - **Sample Messages & Stories**
+
+## Updates (v1.1.0)
+
+### SDK & Dependencies Upgrade
+- ✅ Upgraded Expo from SDK 51 to **SDK 54**
+- ✅ Updated React Native from 0.74.5 to **0.76.0**
+- ✅ Improved performance and compatibility with latest React Native features
 
 ## Features Roadmap
 
