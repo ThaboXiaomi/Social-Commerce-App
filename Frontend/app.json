@@ -1,4 +1,7 @@
 {
-  "name": "Frontend",
-  "displayName": "Frontend"
+  "expo": {
+    "name": "Frontend",
+    "slug": "frontend",
+    "version": "1.0.0"
+  }
 }
