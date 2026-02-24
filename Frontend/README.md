@@ -20,7 +20,19 @@ yarn start
 
 ## Step 2: Build and run your app
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your app on Android, iOS, or Web:
+
+### Web
+
+```sh
+# Using npm
+npm run web
+
+# OR using Yarn
+yarn web
+```
+
+The web app will open in your default browser at `http://localhost:19000`. Changes to your code will automatically refresh in the browser.
 
 ### Android
 

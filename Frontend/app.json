@@ -3,9 +3,13 @@
     "name": "Social Commerce",
     "slug": "social-commerce",
     "version": "1.1.0",
-    "sdkVersion": "54.0.0",
+    "sdkVersion": "51.0.0",
     "scheme": "socialcommerce",
     "platforms": ["android", "ios", "web"],
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -19,3 +23,4 @@
     }
   }
 }
+
