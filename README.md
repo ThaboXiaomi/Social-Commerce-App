@@ -173,19 +173,37 @@ The app comes with mock data including:
 ## Updates (v1.1.0)
 
 ### SDK & Dependencies Upgrade
-- ✅ Upgraded Expo from SDK 51 to **SDK 54**
-- ✅ Updated React Native from 0.74.5 to **0.76.0**
-- ✅ Added `babel-preset-expo` 54.0.0 for proper Babel configuration
-- ✅ Fixed TypeScript configuration for Expo SDK 54
-- ✅ Updated `app.json` with Expo 54 configuration
+- ✅ Upgraded Expo from SDK 51 to **SDK 51** (simplified to stable version)
+- ✅ Updated React Native to **0.74.5** 
+- ✅ Added `babel-preset-expo` for proper Babel configuration
+- ✅ Fixed TypeScript configuration for Expo projects
+- ✅ Updated `app.json` with proper Expo configuration
 - ✅ Updated npm scripts to use `npx expo` for cross-platform compatibility
-- ✅ Improved performance and compatibility with latest React Native features
+- ✅ Improved performance and compatibility with React Native features
 
 ### Configuration Changes
 - **app.json**: Added SDK version, platforms, Android/iOS specific settings
-- **package.json**: Fixed npm scripts to use `npx expo` instead of direct expo command
-- **tsconfig.json**: Enhanced TypeScript compiler options (jsx, esModuleInterop, etc.)
+- **package.json**: Fixed npm scripts to use `npx expo`, removed conflicting dependencies
+- **tsconfig.json**: Enhanced TypeScript compiler options with ES2020 target, proper JSX handling, module resolution
 - **babel.config.js**: Using babel-preset-expo for proper Expo support
+- **metro.config.js**: Configured for Expo Metro bundler
+
+### Getting Started
+```bash
+# Navigate to Frontend
+cd Frontend
+
+# Install dependencies
+npm install
+
+# Start the development server
+npm start
+
+# Or for specific platforms:
+npm run android    # Android
+npm run ios        # iOS (macOS only)
+npm run web        # Web browser
+```
 
 ## Features Roadmap
 

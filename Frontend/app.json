@@ -16,9 +16,6 @@
     "ios": {
       "supportsTabletMode": true,
       "bundleIdentifier": "com.socialcommerce"
-    },
-    "plugins": [
-      ["expo-router", { "origin": false }]
-    ]
+    }
   }
 }
