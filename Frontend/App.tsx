@@ -20,13 +20,100 @@ import {
   Animated,
   ActivityIndicator,
   Easing,
+  Platform,
+  useWindowDimensions,
 } from 'react-native';
 import {MaterialCommunityIcons} from '@expo/vector-icons';
 import {
   SafeAreaProvider,
+  useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
 const API_BASE = 'http://localhost:8000';
+let ACCESS_TOKEN = '';
+let ACTIVE_USER_ID = 1;
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
+const SHADOW_POST_CARD = Platform.select({
+  web: {boxShadow: '0px 8px 10px rgba(15, 23, 42, 0.06)'},
+  default: {
+    shadowColor: '#0f172a',
+    shadowOffset: {width: 0, height: 8},
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+}) as any;
+const SHADOW_BOTTOM_NAV = Platform.select({
+  web: {boxShadow: '0px 8px 16px rgba(15, 23, 42, 0.08)'},
+  default: {
+    shadowColor: '#0f172a',
+    shadowOffset: {width: 0, height: 8},
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 5,
+  },
+}) as any;
+const SHADOW_APP_LOGO_ORB = Platform.select({
+  web: {boxShadow: '0px 12px 18px rgba(96, 165, 250, 0.45)'},
+  default: {
+    shadowColor: '#60a5fa',
+    shadowOffset: {width: 0, height: 12},
+    shadowOpacity: 0.45,
+    shadowRadius: 18,
+    elevation: 10,
+  },
+}) as any;
+const SHADOW_GLASS_FORM = Platform.select({
+  web: {boxShadow: '0px 8px 24px rgba(0, 0, 0, 0.1)'},
+  default: {
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 8},
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+}) as any;
+const SHADOW_GLASS_BUTTON = Platform.select({
+  web: {boxShadow: '0px 4px 8px rgba(0, 122, 255, 0.3)'},
+  default: {
+    shadowColor: '#007AFF',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+}) as any;
+const SHADOW_AUTH_SUBMIT = Platform.select({
+  web: {boxShadow: '0px 10px 14px rgba(59, 130, 246, 0.35)'},
+  default: {
+    shadowColor: '#3b82f6',
+    shadowOffset: {width: 0, height: 10},
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    elevation: 6,
+  },
+}) as any;
+const SHADOW_LOGOUT = Platform.select({
+  web: {boxShadow: '0px 4px 8px rgba(255, 59, 48, 0.3)'},
+  default: {
+    shadowColor: '#FF3B30',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+}) as any;
+
+const apiFetch = (path: string, options: RequestInit = {}) => {
+  const headers = new Headers(options.headers ?? {});
+  if (ACCESS_TOKEN) {
+    headers.set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+  }
+  return fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+  });
+};
 
 const MOCK_POSTS = [
   {
@@ -360,12 +447,29 @@ interface AuthAccount {
   provider?: string;
 }
 
+interface AuthApiUser {
+  id: number;
+  full_name: string;
+  username: string;
+  email: string;
+  provider?: string | null;
+}
+
+interface AuthActionResult {
+  account: AuthAccount | null;
+  accessToken?: string;
+  refreshToken?: string;
+  error?: string;
+}
+
 type Screen = 'feed' | 'chat' | 'stories' | 'profile' | 'shop' | 'cart' | 'orders' | 'stocks' | 'forex' | 'notifications' | 'search' | 'wishlist' | 'wallet' | 'crypto' | 'copy-trading' | 'loyalty' | 'settings' | 'followers' | 'analytics';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
   const [isLoading, setIsLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [accessToken, setAccessToken] = useState('');
+  const [refreshToken, setRefreshToken] = useState('');
   const [accounts, setAccounts] = useState<AuthAccount[]>([
     {
       id: 1,
@@ -403,12 +507,154 @@ function App() {
   });
 
   const handleLoginSuccess = (account: AuthAccount) => {
+    ACTIVE_USER_ID = account.id;
     setActiveUser(mapAccountToUser(account));
     setIsLoggedIn(true);
   };
 
-  const handleSignUp = (account: AuthAccount) => {
-    setAccounts(prev => [...prev, account]);
+  useEffect(() => {
+    ACCESS_TOKEN = accessToken;
+  }, [accessToken]);
+
+  const upsertAccount = (account: AuthAccount) => {
+    setAccounts(prev => {
+      const existingIndex = prev.findIndex(
+        existing => existing.email.toLowerCase() === account.email.toLowerCase()
+      );
+
+      if (existingIndex === -1) {
+        return [...prev, account];
+      }
+
+      const next = [...prev];
+      next[existingIndex] = account;
+      return next;
+    });
+  };
+
+  const mapApiUserToAccount = (user: AuthApiUser, password: string): AuthAccount => ({
+    id: user.id,
+    fullName: user.full_name,
+    username: user.username,
+    email: user.email,
+    password,
+    provider: user.provider ?? undefined,
+  });
+
+  const extractApiError = async (response: Response) => {
+    try {
+      const body = await response.json();
+      if (typeof body?.detail === 'string') {
+        return body.detail;
+      }
+      if (typeof body?.message === 'string') {
+        return body.message;
+      }
+    } catch (error) {}
+    return 'Request failed. Please try again.';
+  };
+
+  const handleLogin = async (email: string, password: string): Promise<AuthActionResult> => {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    try {
+      const response = await apiFetch(`/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          password,
+        }),
+      });
+
+      if (!response.ok) {
+        return {account: null, error: await extractApiError(response)};
+      }
+
+      const data = await response.json();
+      const account = mapApiUserToAccount(data.user, password);
+      upsertAccount(account);
+      return {account, accessToken: data.access_token, refreshToken: data.refresh_token};
+    } catch (error) {
+      const matchedAccount = accounts.find(
+        account => account.email.toLowerCase() === normalizedEmail
+      );
+
+      if (!matchedAccount) {
+        return {account: null, error: 'Account not found.'};
+      }
+
+      if (matchedAccount.password !== password) {
+        return {account: null, error: 'Incorrect password.'};
+      }
+
+      return {account: matchedAccount};
+    }
+  };
+
+  const handleSignUp = async ({
+    fullName,
+    username,
+    email,
+    password,
+    provider,
+  }: Omit<AuthAccount, 'id'>): Promise<AuthActionResult> => {
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedUsername = username.trim().toLowerCase();
+
+    try {
+      const response = await apiFetch(`/auth/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          full_name: fullName.trim(),
+          username: normalizedUsername,
+          email: normalizedEmail,
+          password,
+          provider: provider ?? null,
+        }),
+      });
+
+      if (!response.ok) {
+        return {account: null, error: await extractApiError(response)};
+      }
+
+      const data = await response.json();
+      const account = mapApiUserToAccount(data.user, password);
+      upsertAccount(account);
+      return {account, accessToken: data.access_token, refreshToken: data.refresh_token};
+    } catch (error) {
+      const emailTaken = accounts.some(
+        account => account.email.toLowerCase() === normalizedEmail
+      );
+      const usernameTaken = accounts.some(
+        account => account.username.toLowerCase() === normalizedUsername
+      );
+
+      if (emailTaken) {
+        return {account: null, error: 'Email already used.'};
+      }
+
+      if (usernameTaken) {
+        return {account: null, error: 'Username unavailable.'};
+      }
+
+      const fallbackAccount: AuthAccount = {
+        id: Date.now(),
+        fullName: fullName.trim(),
+        username: normalizedUsername,
+        email: normalizedEmail,
+        password,
+        provider,
+      };
+
+      upsertAccount(fallbackAccount);
+      return {account: fallbackAccount};
+    }
   };
 
   useEffect(() => {
@@ -427,7 +673,16 @@ function App() {
       <SafeAreaProvider>
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
         <AuthenticationScreen
-          onLoginSuccess={handleLoginSuccess}
+          onLoginSuccess={(account, tokens) => {
+            if (tokens?.accessToken) {
+              setAccessToken(tokens.accessToken);
+            }
+            if (tokens?.refreshToken) {
+              setRefreshToken(tokens.refreshToken);
+            }
+            handleLoginSuccess(account);
+          }}
+          onLogin={handleLogin}
           onSignUp={handleSignUp}
           accounts={accounts}
         />
@@ -441,6 +696,8 @@ function App() {
       <AppContent
         currentUser={activeUser}
         onLogout={() => {
+          setAccessToken('');
+          setRefreshToken('');
           setIsLoggedIn(false);
           setIsLoading(true);
         }}
@@ -462,13 +719,13 @@ function SplashScreen() {
         toValue: 1,
         duration: 420,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
       Animated.timing(cardTranslateY, {
         toValue: 0,
         duration: 460,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
     ]);
 
@@ -478,13 +735,13 @@ function SplashScreen() {
           toValue: 1.08,
           duration: 1200,
           easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
         Animated.timing(pulseAnim, {
           toValue: 1,
           duration: 1200,
           easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
       ])
     );
@@ -494,7 +751,7 @@ function SplashScreen() {
         toValue: 1,
         duration: 1450,
         easing: Easing.linear,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       })
     );
 
@@ -551,13 +808,20 @@ function SplashScreen() {
 // Authentication Screen
 function AuthenticationScreen({
   onLoginSuccess,
+  onLogin,
   onSignUp,
   accounts,
 }: {
-  onLoginSuccess: (account: AuthAccount) => void;
-  onSignUp: (account: AuthAccount) => void;
+  onLoginSuccess: (
+    account: AuthAccount,
+    tokens?: {accessToken?: string; refreshToken?: string}
+  ) => void;
+  onLogin: (email: string, password: string) => Promise<AuthActionResult>;
+  onSignUp: (account: Omit<AuthAccount, 'id'>) => Promise<AuthActionResult>;
   accounts: AuthAccount[];
 }) {
+  const {width} = useWindowDimensions();
+  const isNarrow = width < 390;
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -573,7 +837,7 @@ function AuthenticationScreen({
     Animated.timing(slideAnim, {
       toValue: 0,
       duration: 500,
-      useNativeDriver: true,
+      useNativeDriver: USE_NATIVE_DRIVER,
     }).start();
   }, [slideAnim]);
 
@@ -591,7 +855,7 @@ function AuthenticationScreen({
   const isStrongPassword = (value: string) =>
     value.length >= 8 && /[A-Za-z]/.test(value) && /\d/.test(value);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     const normalizedEmail = email.trim().toLowerCase();
 
     if (!normalizedEmail || !password) {
@@ -604,25 +868,20 @@ function AuthenticationScreen({
       return;
     }
 
-    const matchedAccount = accounts.find(
-      account => account.email.toLowerCase() === normalizedEmail
-    );
-
-    if (!matchedAccount) {
-      Alert.alert('Account not found', 'Create an account from Sign Up first.');
+    const result = await onLogin(normalizedEmail, password);
+    if (!result.account) {
+      Alert.alert('Sign in failed', result.error ?? 'Unable to sign in right now.');
       return;
     }
 
-    if (matchedAccount.password !== password) {
-      Alert.alert('Incorrect password', 'Check your password and try again.');
-      return;
-    }
-
-    Alert.alert('Welcome back', `Signed in as ${matchedAccount.fullName}`);
-    onLoginSuccess(matchedAccount);
+    Alert.alert('Welcome back', `Signed in as ${result.account.fullName}`);
+    onLoginSuccess(result.account, {
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+    });
   };
 
-  const handleSignUpSubmit = () => {
+  const handleSignUpSubmit = async () => {
     const normalizedFullName = fullName.trim();
     const normalizedUsername = username.trim().toLowerCase();
     const normalizedEmail = email.trim().toLowerCase();
@@ -670,17 +929,23 @@ function AuthenticationScreen({
       return;
     }
 
-    const newAccount: AuthAccount = {
-      id: Date.now(),
+    const result = await onSignUp({
       fullName: normalizedFullName,
       username: normalizedUsername,
       email: normalizedEmail,
       password,
-    };
+    });
 
-    onSignUp(newAccount);
+    if (!result.account) {
+      Alert.alert('Sign up failed', result.error ?? 'Unable to create account right now.');
+      return;
+    }
+
     Alert.alert('Account created', 'Your UniHub account is ready.');
-    onLoginSuccess(newAccount);
+    onLoginSuccess(result.account, {
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+    });
   };
 
   const handleForgotPassword = () => {
@@ -711,7 +976,7 @@ function AuthenticationScreen({
     );
   };
 
-  const handleSocialLogin = (provider: string) => {
+  const handleSocialLogin = async (provider: string) => {
     const providerSlug = provider.toLowerCase();
     const socialEmail = `${providerSlug}@social.unihub.app`;
     const existingAccount = accounts.find(
@@ -724,18 +989,24 @@ function AuthenticationScreen({
       return;
     }
 
-    const socialAccount: AuthAccount = {
-      id: Date.now(),
+    const result = await onSignUp({
       fullName: `${provider} User`,
       username: `${providerSlug}_user`,
       email: socialEmail,
       password: `social_${providerSlug}`,
       provider,
-    };
+    });
 
-    onSignUp(socialAccount);
+    if (!result.account) {
+      Alert.alert('Sign in failed', result.error ?? `Unable to connect with ${provider}.`);
+      return;
+    }
+
     Alert.alert('Signed in', `New ${provider} account linked successfully.`);
-    onLoginSuccess(socialAccount);
+    onLoginSuccess(result.account, {
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+    });
   };
 
   const handleSubmit = async () => {
@@ -743,9 +1014,9 @@ function AuthenticationScreen({
     await new Promise(resolve => setTimeout(resolve, 500));
 
     if (hasAccount) {
-      handleLogin();
+      await handleLogin();
     } else {
-      handleSignUpSubmit();
+      await handleSignUpSubmit();
     }
 
     setIsSubmitting(false);
@@ -762,6 +1033,7 @@ function AuthenticationScreen({
       <Animated.View
         style={[
           styles.authContent,
+          isNarrow && styles.authContentCompact,
           {
             transform: [{translateY: slideAnim}],
           },
@@ -771,7 +1043,7 @@ function AuthenticationScreen({
           <View style={styles.authBrandPill}>
             <Text style={styles.authBrandPillText}>UniHub</Text>
           </View>
-          <Text style={styles.authTitle}>UniHub</Text>
+          <Text style={[styles.authTitle, isNarrow && styles.authTitleCompact]}>UniHub</Text>
           <Text style={styles.authSubtitle}>
             {hasAccount ? 'Welcome back to your digital hub' : 'Create your all-in-one account'}
           </Text>
@@ -891,31 +1163,31 @@ function AuthenticationScreen({
           <Text style={styles.dividerText}>Or continue with</Text>
           <View style={styles.socialButtons}>
             <TouchableOpacity
-              style={[styles.socialButton, styles.googleButton]}
+              style={[styles.socialButton, isNarrow && styles.socialButtonFull, styles.googleButton]}
               onPress={() => handleSocialLogin('Google')}>
               <MaterialCommunityIcons name="google" size={16} color="#e2e8f0" style={styles.socialIcon} />
               <Text style={styles.socialLabel}>Google</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.socialButton, styles.facebookButton]}
+              style={[styles.socialButton, isNarrow && styles.socialButtonFull, styles.facebookButton]}
               onPress={() => handleSocialLogin('Facebook')}>
               <MaterialCommunityIcons name="facebook" size={16} color="#e2e8f0" style={styles.socialIcon} />
               <Text style={styles.socialLabel}>Facebook</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.socialButton, styles.telegramButton]}
+              style={[styles.socialButton, isNarrow && styles.socialButtonFull, styles.telegramButton]}
               onPress={() => handleSocialLogin('Telegram')}>
               <MaterialCommunityIcons name="send" size={16} color="#e2e8f0" style={styles.socialIcon} />
               <Text style={styles.socialLabel}>Telegram</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.socialButton, styles.vkButton]}
+              style={[styles.socialButton, isNarrow && styles.socialButtonFull, styles.vkButton]}
               onPress={() => handleSocialLogin('VK')}>
               <MaterialCommunityIcons name="alpha-v-circle" size={16} color="#e2e8f0" style={styles.socialIcon} />
               <Text style={styles.socialLabel}>VK</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.socialButton, styles.appleButton]}
+              style={[styles.socialButton, isNarrow && styles.socialButtonFull, styles.appleButton]}
               onPress={() => handleSocialLogin('Apple')}>
               <MaterialCommunityIcons name="apple" size={16} color="#e2e8f0" style={styles.socialIcon} />
               <Text style={styles.socialLabel}>Apple</Text>
@@ -942,6 +1214,9 @@ function AuthenticationScreen({
 }
 
 function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () => void}) {
+  const {width} = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const compactNav = width < 360;
   const [currentScreen, setCurrentScreen] = useState<Screen>('feed');
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -949,7 +1224,7 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
     Animated.timing(slideAnim, {
       toValue: 1,
       duration: 400,
-      useNativeDriver: true,
+      useNativeDriver: USE_NATIVE_DRIVER,
     }).start();
   }, [currentScreen, slideAnim]);
 
@@ -977,7 +1252,14 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
       {currentScreen === 'analytics' && <AnalyticsScreen />}
 
       {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
+      <View
+        style={[
+          styles.bottomNav,
+          compactNav && styles.bottomNavCompact,
+          {
+            bottom: Platform.OS === 'web' ? 10 : Math.max(10, insets.bottom + 6),
+          },
+        ]}>
         <TouchableOpacity
           style={[styles.navButton, currentScreen === 'feed' && styles.navActive]}
           onPress={() => setCurrentScreen('feed')}>
@@ -986,7 +1268,7 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
             size={20}
             color={currentScreen === 'feed' ? '#2563eb' : '#64748b'}
           />
-          <Text style={currentScreen === 'feed' ? styles.navTextActive : styles.navText}>Home</Text>
+          <Text numberOfLines={1} style={[currentScreen === 'feed' ? styles.navTextActive : styles.navText, compactNav && styles.navTextCompact]}>Home</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.navButton, currentScreen === 'stocks' && styles.navActive]}
@@ -996,7 +1278,7 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
             size={20}
             color={currentScreen === 'stocks' ? '#2563eb' : '#64748b'}
           />
-          <Text style={currentScreen === 'stocks' ? styles.navTextActive : styles.navText}>Market</Text>
+          <Text numberOfLines={1} style={[currentScreen === 'stocks' ? styles.navTextActive : styles.navText, compactNav && styles.navTextCompact]}>Market</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.navButton, currentScreen === 'shop' && styles.navActive]}
@@ -1006,7 +1288,7 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
             size={20}
             color={currentScreen === 'shop' ? '#2563eb' : '#64748b'}
           />
-          <Text style={currentScreen === 'shop' ? styles.navTextActive : styles.navText}>Shop</Text>
+          <Text numberOfLines={1} style={[currentScreen === 'shop' ? styles.navTextActive : styles.navText, compactNav && styles.navTextCompact]}>Shop</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.navButton, currentScreen === 'chat' && styles.navActive]}
@@ -1016,7 +1298,7 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
             size={20}
             color={currentScreen === 'chat' ? '#2563eb' : '#64748b'}
           />
-          <Text style={currentScreen === 'chat' ? styles.navTextActive : styles.navText}>Chat</Text>
+          <Text numberOfLines={1} style={[currentScreen === 'chat' ? styles.navTextActive : styles.navText, compactNav && styles.navTextCompact]}>Chat</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.navButton, currentScreen === 'profile' && styles.navActive]}
@@ -1026,7 +1308,7 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
             size={20}
             color={currentScreen === 'profile' ? '#2563eb' : '#64748b'}
           />
-          <Text style={currentScreen === 'profile' ? styles.navTextActive : styles.navText}>Profile</Text>
+          <Text numberOfLines={1} style={[currentScreen === 'profile' ? styles.navTextActive : styles.navText, compactNav && styles.navTextCompact]}>Profile</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -1064,7 +1346,7 @@ function FeedScreen() {
 
   const fetchFeed = async () => {
     try {
-      const response = await fetch(`${API_BASE}/feed`);
+      const response = await apiFetch(`/feed`);
       const data = await response.json();
       setPosts(Array.isArray(data) && data.length > 0 ? data : MOCK_POSTS);
     } catch {
@@ -1076,7 +1358,7 @@ function FeedScreen() {
 
   const likePost = async (postId: number) => {
     try {
-      const response = await fetch(`${API_BASE}/posts/${postId}/like`, {method: 'POST'});
+      const response = await apiFetch(`/posts/${postId}/like`, {method: 'POST'});
       const data = await response.json();
       setPosts(posts.map(p => p.id === postId ? {...p, likes: data.likes} : p));
     } catch {
@@ -1288,7 +1570,7 @@ function ChatScreen() {
 
   const fetchConversations = async () => {
     try {
-      const response = await fetch(`${API_BASE}/conversations`);
+      const response = await apiFetch(`/conversations`);
       const data = await response.json();
       setConversations(Array.isArray(data) && data.length > 0 ? data : MOCK_CONVERSATIONS);
     } catch {
@@ -1507,7 +1789,7 @@ function StoriesScreen() {
 
   const fetchStories = async () => {
     try {
-      const response = await fetch(`${API_BASE}/stories`);
+      const response = await apiFetch(`/stories`);
       const data = await response.json();
       setStories(Array.isArray(data) && data.length > 0 ? data : MOCK_STORIES);
     } catch {
@@ -1605,7 +1887,7 @@ function StocksScreen() {
 
   const fetchStocks = async () => {
     try {
-      const response = await fetch(`${API_BASE}/stocks`);
+      const response = await apiFetch(`/stocks`);
       const data = await response.json();
       setStocks(Array.isArray(data) && data.length > 0 ? data : MOCK_STOCKS);
     } catch {
@@ -1617,7 +1899,7 @@ function StocksScreen() {
 
   const fetchPortfolio = async () => {
     try {
-      const response = await fetch(`${API_BASE}/portfolio/1`);
+      const response = await apiFetch(`/portfolio/${ACTIVE_USER_ID}`);
       const data = await response.json();
       setPortfolio(data && Object.keys(data).length > 0 ? data : MOCK_PORTFOLIO);
     } catch {
@@ -1642,11 +1924,11 @@ function StocksScreen() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/trade/${side}`, {
+      const response = await apiFetch(`/trade/${side}`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
-          user_id: 1,
+          user_id: ACTIVE_USER_ID,
           symbol: selectedStock.symbol,
           quantity,
           price: selectedStock.price,
@@ -1858,7 +2140,7 @@ function ForexScreen() {
 
   const fetchForexPairs = async () => {
     try {
-      const response = await fetch(`${API_BASE}/forex`);
+      const response = await apiFetch(`/forex`);
       const data = await response.json();
       setForexPairs(Array.isArray(data) && data.length > 0 ? data : MOCK_FOREX);
     } catch {
@@ -2030,7 +2312,7 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
     Animated.spring(scaleAnim, {
       toValue: 1,
       friction: 5,
-      useNativeDriver: true,
+      useNativeDriver: USE_NATIVE_DRIVER,
     }).start();
   }, [scaleAnim]);
 
@@ -2289,7 +2571,7 @@ function ShoppingScreen() {
 
   const fetchProducts = async () => {
     try {
-      const response = await fetch(`${API_BASE}/products`);
+      const response = await apiFetch(`/products`);
       const data = await response.json();
       const productList = Array.isArray(data) && data.length > 0 ? data : MOCK_PRODUCTS;
       setProducts(productList);
@@ -2319,7 +2601,7 @@ function ShoppingScreen() {
     setLocalCartCount(prev => prev + 1);
 
     try {
-      const response = await fetch(`${API_BASE}/cart/1/add`, {
+      const response = await apiFetch(`/cart/${ACTIVE_USER_ID}/add`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -2546,7 +2828,7 @@ function CartScreen() {
 
   const fetchCart = async () => {
     try {
-      const response = await fetch(`${API_BASE}/cart/1`);
+      const response = await apiFetch(`/cart/${ACTIVE_USER_ID}`);
       const data = await response.json();
       const items = Array.isArray(data?.items) && data.items.length > 0 ? data.items : MOCK_CART.items;
       setCartItems(items);
@@ -2561,7 +2843,7 @@ function CartScreen() {
 
   const removeItem = async (productId: number) => {
     try {
-      await fetch(`${API_BASE}/cart/1/remove/${productId}`, {method: 'POST'});
+      await apiFetch(`/cart/${ACTIVE_USER_ID}/remove/${productId}`, {method: 'POST'});
       fetchCart();
     } catch {
       const updatedItems = cartItems.filter(item => item.product_id !== productId);
@@ -2582,7 +2864,7 @@ function CartScreen() {
         onPress: async (address: string | undefined) => {
           if (!address) return;
           try {
-            const response = await fetch(`${API_BASE}/checkout/1`, {
+            const response = await apiFetch(`/checkout/${ACTIVE_USER_ID}`, {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({address}),
@@ -2659,7 +2941,7 @@ function OrdersScreen() {
 
   const fetchOrders = async () => {
     try {
-      const response = await fetch(`${API_BASE}/orders/1`);
+      const response = await apiFetch(`/orders/${ACTIVE_USER_ID}`);
       const data = await response.json();
       setOrders(Array.isArray(data) && data.length > 0 ? data : MOCK_ORDERS);
     } catch {
@@ -2714,7 +2996,7 @@ function NotificationsScreen() {
 
   const fetchNotifications = async () => {
     try {
-      const response = await fetch(`${API_BASE}/notifications/1`);
+      const response = await apiFetch(`/notifications/${ACTIVE_USER_ID}`);
       const data = await response.json();
       setNotifications(Array.isArray(data) && data.length > 0 ? data : MOCK_NOTIFICATIONS);
     } catch {
@@ -2726,7 +3008,7 @@ function NotificationsScreen() {
 
   const markAsRead = async (notificationId: number) => {
     try {
-      await fetch(`${API_BASE}/notifications/1/read/${notificationId}`, {method: 'POST'});
+      await apiFetch(`/notifications/${ACTIVE_USER_ID}/read/${notificationId}`, {method: 'POST'});
       setNotifications(notifications.map(n => n.id === notificationId ? {...n, read: true} : n));
     } catch {
       setNotifications(notifications.map(n => n.id === notificationId ? {...n, read: true} : n));
@@ -2777,7 +3059,7 @@ function SearchScreen() {
       });
 
       try {
-        const response = await fetch(`${API_BASE}/products?search=${text}`);
+        const response = await apiFetch(`/products?search=${text}`);
         const data = await response.json();
         setResults(Array.isArray(data) && data.length > 0 ? data : fallbackResults);
       } catch {
@@ -2830,7 +3112,7 @@ function WishlistScreen() {
 
   const fetchWishlist = async () => {
     try {
-      const response = await fetch(`${API_BASE}/wishlists/1`);
+      const response = await apiFetch(`/wishlists/${ACTIVE_USER_ID}`);
       const data = await response.json();
       setWishlist(Array.isArray(data) && data.length > 0 ? data : MOCK_WISHLIST);
     } catch {
@@ -2842,7 +3124,7 @@ function WishlistScreen() {
 
   const removeFromWishlist = async (productId: number) => {
     try {
-      await fetch(`${API_BASE}/wishlists/1/remove/${productId}`, {method: 'DELETE'});
+      await apiFetch(`/wishlists/${ACTIVE_USER_ID}/remove/${productId}`, {method: 'DELETE'});
       setWishlist(wishlist.filter(w => w.product_id !== productId));
     } catch {
       setWishlist(wishlist.filter(w => w.product_id !== productId));
@@ -2887,7 +3169,7 @@ function WalletScreen() {
 
   const fetchWallet = async () => {
     try {
-      const response = await fetch(`${API_BASE}/wallet/1`);
+      const response = await apiFetch(`/wallet/${ACTIVE_USER_ID}`);
       const data = await response.json();
       setWallet(data && Object.keys(data).length > 0 ? data : MOCK_WALLET);
     } catch {
@@ -2901,7 +3183,7 @@ function WalletScreen() {
       return;
     }
     try {
-      const response = await fetch(`${API_BASE}/wallet/1/deposit?amount=${depositAmount}`, {method: 'POST'});
+      const response = await apiFetch(`/wallet/${ACTIVE_USER_ID}/deposit?amount=${depositAmount}`, {method: 'POST'});
       const data = await response.json();
       if (data.success) {
         Alert.alert('Success', `Deposited $${depositAmount}`);
@@ -2968,7 +3250,7 @@ function CryptoScreen() {
 
   const fetchCryptos = async () => {
     try {
-      const response = await fetch(`${API_BASE}/crypto`);
+      const response = await apiFetch(`/crypto`);
       const data = await response.json();
       setCryptos(Array.isArray(data) && data.length > 0 ? data : MOCK_CRYPTOS);
     } catch {
@@ -3028,7 +3310,7 @@ function CopyTradingScreen() {
 
   const fetchTraders = async () => {
     try {
-      const response = await fetch(`${API_BASE}/copy-traders`);
+      const response = await apiFetch(`/copy-traders`);
       const data = await response.json();
       setTraders(Array.isArray(data) && data.length > 0 ? data : MOCK_TRADERS);
     } catch {
@@ -3086,7 +3368,7 @@ function LoyaltyScreen() {
 
   const fetchLoyalty = async () => {
     try {
-      const response = await fetch(`${API_BASE}/loyalty/1`);
+      const response = await apiFetch(`/loyalty/${ACTIVE_USER_ID}`);
       const data = await response.json();
       setLoyalty(data && Object.keys(data).length > 0 ? data : MOCK_LOYALTY);
     } catch {
@@ -3186,7 +3468,7 @@ function FollowersScreen() {
 
   const fetchFollowers = async () => {
     try {
-      const response = await fetch(`${API_BASE}/followers/1`);
+      const response = await apiFetch(`/followers/${ACTIVE_USER_ID}`);
       const data = await response.json();
       setFollowers(Array.isArray(data) && data.length > 0 ? data : MOCK_FOLLOWERS);
     } catch {
@@ -3228,7 +3510,7 @@ function AnalyticsScreen() {
 
   const fetchAnalytics = async () => {
     try {
-      const response = await fetch(`${API_BASE}/analytics/1/user_spending`);
+      const response = await apiFetch(`/analytics/${ACTIVE_USER_ID}/user_spending`);
       const data = await response.json();
       setAnalytics(data?.[0]?.data || MOCK_ANALYTICS);
     } catch {
@@ -3443,11 +3725,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 14,
     marginBottom: 12,
-    shadowColor: '#0f172a',
-    shadowOffset: {width: 0, height: 8},
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    elevation: 3,
+    ...SHADOW_POST_CARD,
   },
   postHeader: {
     flexDirection: 'row',
@@ -4141,11 +4419,13 @@ const styles = StyleSheet.create({
     height: 64,
     borderRadius: 18,
     paddingHorizontal: 6,
-    shadowColor: '#0f172a',
-    shadowOffset: {width: 0, height: 8},
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 5,
+    ...SHADOW_BOTTOM_NAV,
+  },
+  bottomNavCompact: {
+    left: 8,
+    right: 8,
+    height: 60,
+    paddingHorizontal: 2,
   },
   navButton: {
     flex: 1,
@@ -4167,6 +4447,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#2563eb',
+  },
+  navTextCompact: {
+    fontSize: 10,
   },
 
   // Shopping Styles
@@ -4955,11 +5238,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#2563eb',
-    shadowColor: '#60a5fa',
-    shadowOffset: {width: 0, height: 12},
-    shadowOpacity: 0.45,
-    shadowRadius: 18,
-    elevation: 10,
+    ...SHADOW_APP_LOGO_ORB,
   },
   appLogo: {
     fontSize: 40,
@@ -5015,6 +5294,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
     paddingVertical: 40,
+    paddingHorizontal: 10,
   },
   authGlowTop: {
     position: 'absolute',
@@ -5037,12 +5317,19 @@ const styles = StyleSheet.create({
     opacity: 0.2,
   },
   authContent: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
     marginHorizontal: 22,
     backgroundColor: 'rgba(15, 23, 42, 0.78)',
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.28)',
     borderRadius: 24,
     padding: 22,
+  },
+  authContentCompact: {
+    marginHorizontal: 10,
+    padding: 16,
   },
   authHeader: {
     alignItems: 'center',
@@ -5069,6 +5356,9 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     color: '#f8fbff',
   },
+  authTitleCompact: {
+    fontSize: 28,
+  },
   authSubtitle: {
     fontSize: 14,
     color: '#cbd5e1',
@@ -5084,11 +5374,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 24,
     marginBottom: 24,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 8},
-    shadowOpacity: 0.1,
-    shadowRadius: 24,
-    elevation: 10,
+    ...SHADOW_GLASS_FORM,
   },
   glassInput: {
     backgroundColor: 'rgba(255, 255, 255, 0.5)',
@@ -5107,11 +5393,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     marginTop: 12,
     alignItems: 'center',
-    shadowColor: '#007AFF',
-    shadowOffset: {width: 0, height: 4},
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    ...SHADOW_GLASS_BUTTON,
   },
   glassButtonText: {
     color: '#fff',
@@ -5179,11 +5461,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 13,
     alignItems: 'center',
-    shadowColor: '#3b82f6',
-    shadowOffset: {width: 0, height: 10},
-    shadowOpacity: 0.35,
-    shadowRadius: 14,
-    elevation: 6,
+    ...SHADOW_AUTH_SUBMIT,
   },
   authSubmitButtonDisabled: {
     opacity: 0.7,
@@ -5223,6 +5501,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.35)',
   },
+  socialButtonFull: {
+    width: '100%',
+  },
   googleButton: {
     borderColor: 'rgba(234, 67, 53, 0.7)',
   },
@@ -5248,6 +5529,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#e2e8f0',
+    flexShrink: 1,
   },
 
   // Toggle Container
@@ -5310,11 +5592,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     paddingVertical: 14,
     alignItems: 'center',
-    shadowColor: '#FF3B30',
-    shadowOffset: {width: 0, height: 4},
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    ...SHADOW_LOGOUT,
   },
   logoutText: {
     color: '#fff',
@@ -5672,3 +5950,5 @@ const styles = StyleSheet.create({
 });
 
 export default App;
+
+

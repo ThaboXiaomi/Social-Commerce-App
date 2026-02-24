@@ -1,10 +1,182 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from enum import Enum
+import os
+import urllib.parse
+import urllib.request
+import json
+
+try:
+    from .auth_db import init_auth_db
+    from .auth_routes import get_current_user, router as auth_router
+    from .state_db import get_state, init_state_db, seed_state, set_state
+except ImportError:
+    from auth_db import init_auth_db
+    from auth_routes import get_current_user, router as auth_router
+    from state_db import get_state, init_state_db, seed_state, set_state
 
 app = FastAPI(title="Social Commerce App", description="Social Media + E-Commerce (Amazon, Temu, Facebook Marketplace style)")
+
+STATE_KEYS = {
+    "posts": "posts",
+    "messages": "messages",
+    "stories": "stories",
+    "products_review": "products_review",
+    "cart": "cart",
+    "orders": "orders",
+    "watchlists": "watchlists",
+    "trades": "trades",
+    "portfolios": "portfolios",
+    "notifications": "notifications",
+    "reviews": "reviews",
+    "wishlists": "wishlists",
+    "wallets": "wallets",
+    "chat_messages": "chat_messages",
+    "follows": "follows",
+    "copy_traders": "copy_traders",
+    "loyalty_points": "loyalty_points",
+    "analytics_data": "analytics_data",
+    "settings_data": "settings_data",
+}
+
+EXTERNAL_TIMEOUT_SECONDS = 6
+
+
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        if hasattr(value, "model_dump"):
+            return value.model_dump()
+        return value.dict()
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, list):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+    return value
+
+
+def _persist_state(key: str, value: Any) -> None:
+    set_state(key, _to_jsonable(value))
+
+
+def _fetch_json(url: str, headers: Optional[Dict[str, str]] = None) -> Optional[Any]:
+    request = urllib.request.Request(url, headers=headers or {})
+    try:
+        with urllib.request.urlopen(request, timeout=EXTERNAL_TIMEOUT_SECONDS) as response:
+            payload = response.read().decode("utf-8")
+            return json.loads(payload)
+    except Exception:
+        return None
+    return None
+
+
+def _hydrate_model_list(key: str, model_cls: Any, default_items: List[Any]) -> List[Any]:
+    default_payload = _to_jsonable(default_items)
+    raw_items = seed_state(key, default_payload)
+    if not isinstance(raw_items, list):
+        set_state(key, default_payload)
+        return default_items
+    hydrated = []
+    for item in raw_items:
+        try:
+            hydrated.append(model_cls(**item))
+        except Exception:
+            continue
+    if not raw_items:
+        return []
+    return hydrated if hydrated else default_items
+
+
+def _hydrate_model_dict(key: str, model_cls: Any, default_items: Dict[int, Any]) -> Dict[int, Any]:
+    default_payload = _to_jsonable(default_items)
+    raw_items = seed_state(key, default_payload)
+    if not isinstance(raw_items, dict):
+        set_state(key, default_payload)
+        return default_items
+
+    hydrated: Dict[int, Any] = {}
+    for raw_key, raw_value in raw_items.items():
+        try:
+            hydrated[int(raw_key)] = model_cls(**raw_value)
+        except Exception:
+            continue
+    if not raw_items:
+        return {}
+    return hydrated if hydrated else default_items
+
+
+def _hydrate_cart(default_cart: Dict[int, List[Any]]) -> Dict[int, List[Any]]:
+    default_payload = _to_jsonable(default_cart)
+    raw_cart = seed_state(STATE_KEYS["cart"], default_payload)
+    if not isinstance(raw_cart, dict):
+        set_state(STATE_KEYS["cart"], default_payload)
+        return default_cart
+
+    hydrated: Dict[int, List[CartItem]] = {}
+    for raw_user_id, raw_items in raw_cart.items():
+        if not isinstance(raw_items, list):
+            continue
+        items: List[CartItem] = []
+        for raw_item in raw_items:
+            try:
+                items.append(CartItem(**raw_item))
+            except Exception:
+                continue
+        hydrated[int(raw_user_id)] = items
+    return hydrated
+
+
+def _hydrate_primitive_list(key: str, default_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    default_payload = _to_jsonable(default_items)
+    raw_items = seed_state(key, default_payload)
+    if not isinstance(raw_items, list):
+        set_state(key, default_payload)
+        return default_items
+    return raw_items
+
+
+def _hydrate_all_state() -> None:
+    global POSTS, MESSAGES, STORIES, PRODUCTS_REVIEW, CART, ORDERS, WATCHLISTS, TRADES, PORTFOLIOS
+    global NOTIFICATIONS, REVIEWS, WISHLISTS, WALLETS, CHAT_MESSAGES, FOLLOWS
+    global COPY_TRADERS, LOYALTY_POINTS, ANALYTICS_DATA, SETTINGS_DATA
+
+    POSTS = _hydrate_model_list(STATE_KEYS["posts"], Post, POSTS)
+    MESSAGES = _hydrate_model_list(STATE_KEYS["messages"], Message, MESSAGES)
+    STORIES = _hydrate_model_list(STATE_KEYS["stories"], Story, STORIES)
+    PRODUCTS_REVIEW = _hydrate_model_list(STATE_KEYS["products_review"], Review, PRODUCTS_REVIEW)
+    CART = _hydrate_cart(CART)
+    ORDERS = _hydrate_model_list(STATE_KEYS["orders"], Order, ORDERS)
+    WATCHLISTS = _hydrate_model_list(STATE_KEYS["watchlists"], Watchlist, WATCHLISTS)
+    TRADES = _hydrate_model_list(STATE_KEYS["trades"], Trade, TRADES)
+    PORTFOLIOS = _hydrate_model_dict(STATE_KEYS["portfolios"], Portfolio, PORTFOLIOS)
+    NOTIFICATIONS = _hydrate_primitive_list(STATE_KEYS["notifications"], NOTIFICATIONS)
+    REVIEWS = _hydrate_primitive_list(STATE_KEYS["reviews"], REVIEWS)
+    WISHLISTS = _hydrate_primitive_list(STATE_KEYS["wishlists"], WISHLISTS)
+    WALLETS = _hydrate_primitive_list(STATE_KEYS["wallets"], WALLETS)
+    CHAT_MESSAGES = _hydrate_primitive_list(STATE_KEYS["chat_messages"], CHAT_MESSAGES)
+    FOLLOWS = _hydrate_primitive_list(STATE_KEYS["follows"], FOLLOWS)
+    COPY_TRADERS = _hydrate_primitive_list(STATE_KEYS["copy_traders"], COPY_TRADERS)
+    LOYALTY_POINTS = _hydrate_primitive_list(STATE_KEYS["loyalty_points"], LOYALTY_POINTS)
+    ANALYTICS_DATA = _hydrate_primitive_list(STATE_KEYS["analytics_data"], ANALYTICS_DATA)
+    SETTINGS_DATA = _hydrate_primitive_list(STATE_KEYS["settings_data"], SETTINGS_DATA)
+
+
+def _require_user_access(user_id: int, current_user: Dict[str, Any]) -> None:
+    if int(current_user["id"]) != int(user_id):
+        raise HTTPException(status_code=403, detail="Forbidden: user scope mismatch.")
+
+
+@app.on_event("startup")
+async def setup_auth_database() -> None:
+    init_auth_db()
+    init_state_db()
+    _hydrate_all_state()
+
+
+app.include_router(auth_router)
 
 # Enums
 class OrderStatus(str, Enum):
@@ -285,12 +457,43 @@ async def list_users():
 # Feed endpoints
 @app.get("/feed", response_model=List[Post])
 async def get_feed():
+    external_posts = _fetch_json("https://dummyjson.com/posts?limit=12")
+    external_users = _fetch_json("https://dummyjson.com/users?limit=30")
+    if isinstance(external_posts, dict) and isinstance(external_users, dict):
+        posts_payload = external_posts.get("posts", [])
+        users_payload = external_users.get("users", [])
+        if isinstance(posts_payload, list) and isinstance(users_payload, list) and posts_payload:
+            users_by_id = {u.get("id"): u for u in users_payload if isinstance(u, dict)}
+            live_feed: List[Post] = []
+            for item in posts_payload:
+                if not isinstance(item, dict):
+                    continue
+                user = users_by_id.get(item.get("userId"), {})
+                first = user.get("firstName", "User")
+                last = user.get("lastName", "")
+                username = user.get("username") or f"user_{item.get('userId', 0)}"
+                live_feed.append(
+                    Post(
+                        id=int(item.get("id", 0)),
+                        user_id=int(item.get("userId", 0)),
+                        username=str(username),
+                        avatar=f"https://ui-avatars.com/api/?name={urllib.parse.quote(str(first + ' ' + last).strip())}&background=2563eb&color=ffffff",
+                        content=str(item.get("body", "")),
+                        image=None,
+                        likes=int(item.get("reactions", 0)),
+                        comments=int(item.get("views", 0)) // 20,
+                        timestamp="Live",
+                    )
+                )
+            if live_feed:
+                return live_feed
     return POSTS
 
 @app.post("/posts")
 async def create_post(post: Post):
     new_id = max([p.id for p in POSTS]) + 1
     POSTS.append(Post(id=new_id, **post.dict()))
+    _persist_state(STATE_KEYS["posts"], POSTS)
     return {"success": True, "post_id": new_id}
 
 @app.post("/posts/{post_id}/like")
@@ -298,6 +501,7 @@ async def like_post(post_id: int):
     for post in POSTS:
         if post.id == post_id:
             post.likes += 1
+            _persist_state(STATE_KEYS["posts"], POSTS)
             return {"success": True, "likes": post.likes}
     return {"error": "Post not found"}
 
@@ -306,6 +510,7 @@ async def comment_on_post(post_id: int, comment: Comment):
     for post in POSTS:
         if post.id == post_id:
             post.comments += 1
+            _persist_state(STATE_KEYS["posts"], POSTS)
             return {"success": True, "comment_id": 1, "comments_count": post.comments}
     return {"error": "Post not found"}
 
@@ -322,6 +527,7 @@ async def get_conversation(user_id: int):
 async def send_message(message: Message):
     new_id = max([m.id for m in MESSAGES]) + 1
     MESSAGES.append(Message(id=new_id, **message.dict()))
+    _persist_state(STATE_KEYS["messages"], MESSAGES)
     return {"success": True, "message_id": new_id}
 
 @app.get("/conversations")
@@ -348,6 +554,7 @@ async def get_stories():
 async def upload_story(story: Story):
     new_id = max([s.id for s in STORIES]) + 1
     STORIES.append(Story(id=new_id, **story.dict()))
+    _persist_state(STATE_KEYS["stories"], STORIES)
     return {"success": True, "story_id": new_id}
 
 # ========== E-COMMERCE ENDPOINTS ==========
@@ -355,6 +562,43 @@ async def upload_story(story: Story):
 # Product endpoints
 @app.get("/products", response_model=List[Product])
 async def get_products(category: str = "", search: str = ""):
+    external = _fetch_json("https://dummyjson.com/products?limit=60")
+    if isinstance(external, dict):
+        payload = external.get("products", [])
+        if isinstance(payload, list) and payload:
+            live_products: List[Product] = []
+            for item in payload:
+                if not isinstance(item, dict):
+                    continue
+                live_products.append(
+                    Product(
+                        id=int(item.get("id", 0)),
+                        seller_id=1,
+                        seller_name=str(item.get("brand") or "Marketplace Seller"),
+                        seller_avatar="https://ui-avatars.com/api/?name=Seller&background=0f172a&color=ffffff",
+                        name=str(item.get("title", "Product")),
+                        description=str(item.get("description", "")),
+                        price=float(item.get("price", 0)),
+                        original_price=float(item.get("price", 0)) / max(0.01, (1 - float(item.get("discountPercentage", 0)) / 100)),
+                        image=str(item.get("thumbnail", "https://via.placeholder.com/300")),
+                        images=item.get("images") if isinstance(item.get("images"), list) else [],
+                        category=str(item.get("category", "General")),
+                        rating=float(item.get("rating", 4.0)),
+                        reviews=int(item.get("stock", 0)) + 20,
+                        sold=int(item.get("stock", 0)) * 3,
+                        stock=int(item.get("stock", 0)),
+                        shipping_cost=0 if float(item.get("price", 0)) >= 50 else 4.99,
+                        estimated_delivery="3-6 days",
+                    )
+                )
+
+            products: List[Product] = live_products
+            if category:
+                products = [p for p in products if p.category.lower() == category.lower()]
+            if search:
+                products = [p for p in products if search.lower() in p.name.lower() or search.lower() in p.description.lower()]
+            return products
+
     products = PRODUCTS
     if category:
         products = [p for p in products if p.category.lower() == category.lower()]
@@ -377,6 +621,7 @@ async def get_product_reviews(product_id: int):
 async def add_review(product_id: int, review: Review):
     new_id = max([r.id for r in PRODUCTS_REVIEW]) + 1
     PRODUCTS_REVIEW.append(Review(id=new_id, **review.dict()))
+    _persist_state(STATE_KEYS["products_review"], PRODUCTS_REVIEW)
     return {"success": True, "review_id": new_id}
 
 # Seller endpoints
@@ -397,32 +642,40 @@ async def get_seller_products(seller_id: int):
 
 # Cart endpoints
 @app.get("/cart/{user_id}")
-async def get_cart(user_id: int):
+async def get_cart(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     return {"items": CART.get(user_id, []), "total": sum(item.quantity * item.price for item in CART.get(user_id, []))}
 
 @app.post("/cart/{user_id}/add")
-async def add_to_cart(user_id: int, item: CartItem):
+async def add_to_cart(user_id: int, item: CartItem, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     if user_id not in CART:
         CART[user_id] = []
     CART[user_id].append(item)
+    _persist_state(STATE_KEYS["cart"], CART)
     total = sum(ci.quantity * ci.price for ci in CART[user_id])
     return {"success": True, "cart_items": len(CART[user_id]), "total": total}
 
 @app.post("/cart/{user_id}/remove/{product_id}")
-async def remove_from_cart(user_id: int, product_id: int):
+async def remove_from_cart(user_id: int, product_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     if user_id in CART:
         CART[user_id] = [item for item in CART[user_id] if item.product_id != product_id]
+        _persist_state(STATE_KEYS["cart"], CART)
     total = sum(ci.quantity * ci.price for ci in CART.get(user_id, []))
     return {"success": True, "cart_items": len(CART.get(user_id, [])), "total": total}
 
 @app.post("/cart/{user_id}/clear")
-async def clear_cart(user_id: int):
+async def clear_cart(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     CART[user_id] = []
+    _persist_state(STATE_KEYS["cart"], CART)
     return {"success": True, "message": "Cart cleared"}
 
 # Order endpoints
 @app.post("/checkout/{user_id}")
-async def checkout(user_id: int, address: str):
+async def checkout(user_id: int, address: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     if user_id not in CART or not CART[user_id]:
         return {"error": "Cart is empty"}
     
@@ -440,14 +693,18 @@ async def checkout(user_id: int, address: str):
     )
     ORDERS.append(order)
     CART[user_id] = []
+    _persist_state(STATE_KEYS["orders"], ORDERS)
+    _persist_state(STATE_KEYS["cart"], CART)
     return {"success": True, "order_id": order_id, "total": total, "status": OrderStatus.PENDING}
 
 @app.get("/orders/{user_id}")
-async def get_user_orders(user_id: int):
+async def get_user_orders(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     return [o for o in ORDERS if o.user_id == user_id]
 
 @app.get("/orders/{user_id}/{order_id}")
-async def get_order(user_id: int, order_id: int):
+async def get_order(user_id: int, order_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     for order in ORDERS:
         if order.id == order_id and order.user_id == user_id:
             return order
@@ -458,6 +715,7 @@ async def cancel_order(order_id: int):
     for order in ORDERS:
         if order.id == order_id and order.status == OrderStatus.PENDING:
             order.status = OrderStatus.CANCELLED
+            _persist_state(STATE_KEYS["orders"], ORDERS)
             return {"success": True, "message": "Order cancelled"}
     return {"error": "Order cannot be cancelled"}
 
@@ -519,23 +777,28 @@ async def get_forex_by_symbol(symbol: str):
 
 # Portfolio endpoints
 @app.get("/portfolio/{user_id}", response_model=Portfolio)
-async def get_portfolio(user_id: int):
+async def get_portfolio(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     return PORTFOLIOS.get(user_id, {"error": "Portfolio not found"})
 
 @app.get("/portfolio/{user_id}/holdings")
-async def get_portfolio_holdings(user_id: int):
+async def get_portfolio_holdings(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     return [h for h in PORTFOLIO_HOLDINGS if h.portfolio_id in [p.id for p in PORTFOLIOS.values() if p.user_id == user_id]]
 
 # Watchlist endpoints
 @app.get("/watchlists/{user_id}")
-async def get_watchlists(user_id: int):
+async def get_watchlists(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     return [w for w in WATCHLISTS if w.user_id == user_id]
 
 @app.post("/watchlists/{user_id}")
-async def create_watchlist(user_id: int, name: str):
+async def create_watchlist(user_id: int, name: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     new_id = max([w.id for w in WATCHLISTS]) + 1 if WATCHLISTS else 1
     watchlist = Watchlist(id=new_id, user_id=user_id, name=name, created_at="2026-02-22", items=[])
     WATCHLISTS.append(watchlist)
+    _persist_state(STATE_KEYS["watchlists"], WATCHLISTS)
     return {"success": True, "watchlist_id": new_id}
 
 @app.post("/watchlists/{watchlist_id}/add/{asset_id}")
@@ -544,16 +807,26 @@ async def add_to_watchlist(watchlist_id: int, asset_id: int):
         if watchlist.id == watchlist_id:
             if asset_id not in watchlist.items:
                 watchlist.items.append(asset_id)
+                _persist_state(STATE_KEYS["watchlists"], WATCHLISTS)
             return {"success": True, "items": watchlist.items}
     return {"error": "Watchlist not found"}
 
 # Trading endpoints
 @app.get("/trades/{user_id}")
-async def get_user_trades(user_id: int):
+async def get_user_trades(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     return [t for t in TRADES if t.user_id == user_id]
 
 @app.post("/trade/buy")
-async def execute_buy_trade(user_id: int, symbol: str, quantity: float, price: float, asset_type: str):
+async def execute_buy_trade(
+    user_id: int,
+    symbol: str,
+    quantity: float,
+    price: float,
+    asset_type: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     new_id = max([t.id for t in TRADES]) + 1 if TRADES else 1
     total = quantity * price
     trade = Trade(
@@ -575,11 +848,21 @@ async def execute_buy_trade(user_id: int, symbol: str, quantity: float, price: f
         PORTFOLIOS[user_id].cash -= total
         PORTFOLIOS[user_id].invested += total
         PORTFOLIOS[user_id].total_value = PORTFOLIOS[user_id].cash + PORTFOLIOS[user_id].invested
+    _persist_state(STATE_KEYS["trades"], TRADES)
+    _persist_state(STATE_KEYS["portfolios"], PORTFOLIOS)
     
     return {"success": True, "trade_id": new_id, "total_amount": total}
 
 @app.post("/trade/sell")
-async def execute_sell_trade(user_id: int, symbol: str, quantity: float, price: float, asset_type: str):
+async def execute_sell_trade(
+    user_id: int,
+    symbol: str,
+    quantity: float,
+    price: float,
+    asset_type: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     new_id = max([t.id for t in TRADES]) + 1 if TRADES else 1
     total = quantity * price
     trade = Trade(
@@ -601,6 +884,8 @@ async def execute_sell_trade(user_id: int, symbol: str, quantity: float, price: 
         PORTFOLIOS[user_id].cash += total
         PORTFOLIOS[user_id].invested -= total
         PORTFOLIOS[user_id].total_value = PORTFOLIOS[user_id].cash + PORTFOLIOS[user_id].invested
+    _persist_state(STATE_KEYS["trades"], TRADES)
+    _persist_state(STATE_KEYS["portfolios"], PORTFOLIOS)
     
     return {"success": True, "trade_id": new_id, "total_amount": total}
 
@@ -759,19 +1044,27 @@ SETTINGS_DATA = [
 
 # Notification endpoints
 @app.get("/notifications/{user_id}")
-async def get_notifications(user_id: int):
+async def get_notifications(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     return [n for n in NOTIFICATIONS if n["user_id"] == user_id]
 
 @app.post("/notifications/{user_id}/read/{notification_id}")
-async def mark_notification_read(user_id: int, notification_id: int):
+async def mark_notification_read(
+    user_id: int,
+    notification_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     for notif in NOTIFICATIONS:
         if notif["id"] == notification_id and notif["user_id"] == user_id:
             notif["read"] = True
+            _persist_state(STATE_KEYS["notifications"], NOTIFICATIONS)
             return {"success": True}
     return {"error": "Notification not found"}
 
 @app.get("/notifications/{user_id}/unread-count")
-async def get_unread_count(user_id: int):
+async def get_unread_count(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     count = len([n for n in NOTIFICATIONS if n["user_id"] == user_id and not n["read"]])
     return {"unread_count": count}
 
@@ -785,6 +1078,7 @@ async def add_review(product_id: int, user_id: int, username: str, rating: int, 
     new_id = max([r["id"] for r in REVIEWS]) + 1 if REVIEWS else 1
     review = {"id": new_id, "product_id": product_id, "user_id": user_id, "username": username, "rating": rating, "comment": comment, "helpful_count": 0, "created_at": "2026-02-22"}
     REVIEWS.append(review)
+    _persist_state(STATE_KEYS["reviews"], REVIEWS)
     return {"success": True, "review_id": new_id}
 
 @app.post("/reviews/{review_id}/helpful")
@@ -792,12 +1086,14 @@ async def mark_review_helpful(review_id: int):
     for review in REVIEWS:
         if review["id"] == review_id:
             review["helpful_count"] += 1
+            _persist_state(STATE_KEYS["reviews"], REVIEWS)
             return {"success": True, "helpful_count": review["helpful_count"]}
     return {"error": "Review not found"}
 
 # Wishlist endpoints
 @app.get("/wishlists/{user_id}")
-async def get_wishlist(user_id: int):
+async def get_wishlist(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     wishlist_items = [w for w in WISHLISTS if w["user_id"] == user_id]
     result = []
     for item in wishlist_items:
@@ -807,87 +1103,160 @@ async def get_wishlist(user_id: int):
     return result
 
 @app.post("/wishlists/{user_id}/add/{product_id}")
-async def add_to_wishlist(user_id: int, product_id: int):
+async def add_to_wishlist(
+    user_id: int,
+    product_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     if not any(w["user_id"] == user_id and w["product_id"] == product_id for w in WISHLISTS):
         new_id = max([w["id"] for w in WISHLISTS]) + 1 if WISHLISTS else 1
         wishlist = {"id": new_id, "user_id": user_id, "product_id": product_id, "added_at": "2026-02-22"}
         WISHLISTS.append(wishlist)
+        _persist_state(STATE_KEYS["wishlists"], WISHLISTS)
         return {"success": True, "wishlist_id": new_id}
     return {"error": "Already in wishlist"}
 
 @app.delete("/wishlists/{user_id}/remove/{product_id}")
-async def remove_from_wishlist(user_id: int, product_id: int):
+async def remove_from_wishlist(
+    user_id: int,
+    product_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     global WISHLISTS
     WISHLISTS = [w for w in WISHLISTS if not (w["user_id"] == user_id and w["product_id"] == product_id)]
+    _persist_state(STATE_KEYS["wishlists"], WISHLISTS)
     return {"success": True}
 
 # Wallet endpoints
 @app.get("/wallet/{user_id}")
-async def get_wallet(user_id: int):
+async def get_wallet(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     for wallet in WALLETS:
         if wallet["user_id"] == user_id:
             return wallet
     return {"error": "Wallet not found"}
 
 @app.post("/wallet/{user_id}/deposit")
-async def deposit_to_wallet(user_id: int, amount: float):
+async def deposit_to_wallet(
+    user_id: int,
+    amount: float,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     for wallet in WALLETS:
         if wallet["user_id"] == user_id:
             wallet["balance"] += amount
             wallet["total_earned"] += amount
+            _persist_state(STATE_KEYS["wallets"], WALLETS)
             return {"success": True, "new_balance": wallet["balance"]}
     return {"error": "Wallet not found"}
 
 @app.post("/wallet/{user_id}/withdraw")
-async def withdraw_from_wallet(user_id: int, amount: float):
+async def withdraw_from_wallet(
+    user_id: int,
+    amount: float,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     for wallet in WALLETS:
         if wallet["user_id"] == user_id:
             if wallet["balance"] >= amount:
                 wallet["balance"] -= amount
                 wallet["total_spent"] += amount
+                _persist_state(STATE_KEYS["wallets"], WALLETS)
                 return {"success": True, "new_balance": wallet["balance"]}
             return {"error": "Insufficient balance"}
     return {"error": "Wallet not found"}
 
 # Chat endpoints
 @app.get("/chat/{user_id}/{seller_id}")
-async def get_chat(user_id: int, seller_id: int):
+async def get_chat(
+    user_id: int,
+    seller_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     return [m for m in CHAT_MESSAGES if (m["user_id"] == user_id and m["seller_id"] == seller_id)]
 
 @app.post("/chat/{user_id}/{seller_id}/send")
-async def send_chat_message(user_id: int, seller_id: int, message: str):
+async def send_chat_message(
+    user_id: int,
+    seller_id: int,
+    message: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     new_id = max([m["id"] for m in CHAT_MESSAGES]) + 1 if CHAT_MESSAGES else 1
     msg = {"id": new_id, "user_id": user_id, "seller_id": seller_id, "message": message, "timestamp": "2026-02-22T10:00:00", "read": False}
     CHAT_MESSAGES.append(msg)
+    _persist_state(STATE_KEYS["chat_messages"], CHAT_MESSAGES)
     return {"success": True, "message_id": new_id}
 
 # Follow endpoints
 @app.get("/followers/{user_id}")
-async def get_followers(user_id: int):
+async def get_followers(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     return [f for f in FOLLOWS if f["following_id"] == user_id]
 
 @app.get("/following/{user_id}")
-async def get_following(user_id: int):
+async def get_following(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     return [f for f in FOLLOWS if f["follower_id"] == user_id]
 
 @app.post("/follow/{follower_id}/{following_id}")
-async def follow_user(follower_id: int, following_id: int):
+async def follow_user(
+    follower_id: int,
+    following_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(follower_id, current_user)
     if not any(f["follower_id"] == follower_id and f["following_id"] == following_id for f in FOLLOWS):
         new_id = max([f["id"] for f in FOLLOWS]) + 1 if FOLLOWS else 1
         follow = {"id": new_id, "follower_id": follower_id, "following_id": following_id, "created_at": "2026-02-22"}
         FOLLOWS.append(follow)
+        _persist_state(STATE_KEYS["follows"], FOLLOWS)
         return {"success": True, "follow_id": new_id}
     return {"error": "Already following"}
 
 @app.delete("/unfollow/{follower_id}/{following_id}")
-async def unfollow_user(follower_id: int, following_id: int):
+async def unfollow_user(
+    follower_id: int,
+    following_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(follower_id, current_user)
     global FOLLOWS
     FOLLOWS = [f for f in FOLLOWS if not (f["follower_id"] == follower_id and f["following_id"] == following_id)]
+    _persist_state(STATE_KEYS["follows"], FOLLOWS)
     return {"success": True}
 
 # Cryptocurrency endpoints
 @app.get("/crypto")
 async def get_cryptocurrencies():
+    coingecko = _fetch_json(
+        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h"
+    )
+    if isinstance(coingecko, list) and coingecko:
+        live = []
+        for idx, item in enumerate(coingecko, start=1):
+            if not isinstance(item, dict):
+                continue
+            live.append(
+                {
+                    "id": idx,
+                    "symbol": str(item.get("symbol", "")).upper(),
+                    "name": str(item.get("name", "")),
+                    "price": float(item.get("current_price", 0)),
+                    "change": float(item.get("price_change_24h", 0) or 0),
+                    "change_percent": float(item.get("price_change_percentage_24h", 0) or 0),
+                    "market_cap": f"${float(item.get('market_cap', 0)) / 1_000_000_000:.2f}B",
+                    "volume": f"${float(item.get('total_volume', 0)) / 1_000_000_000:.2f}B",
+                }
+            )
+        if live:
+            return live
     return CRYPTOCURRENCIES
 
 @app.get("/crypto/{crypto_id}")
@@ -898,11 +1267,24 @@ async def get_crypto(crypto_id: int):
     return {"error": "Crypto not found"}
 
 @app.post("/crypto/trade/buy")
-async def buy_crypto(user_id: int, symbol: str, quantity: float, price: float):
+async def buy_crypto(
+    user_id: int,
+    symbol: str,
+    quantity: float,
+    price: float,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     total = quantity * price
     if user_id in PORTFOLIOS:
-        PORTFOLIOS[user_id]["cash"] -= total
-        PORTFOLIOS[user_id]["total_value"] -= total
+        portfolio = PORTFOLIOS[user_id]
+        if isinstance(portfolio, dict):
+            portfolio["cash"] -= total
+            portfolio["total_value"] -= total
+        else:
+            portfolio.cash -= total
+            portfolio.total_value -= total
+        _persist_state(STATE_KEYS["portfolios"], PORTFOLIOS)
     return {"success": True, "symbol": symbol, "quantity": quantity, "total": total}
 
 # Copy Trading endpoints
@@ -911,19 +1293,35 @@ async def get_copy_traders():
     return COPY_TRADERS
 
 @app.post("/copy-traders/{trader_id}/follow")
-async def follow_copy_trader(user_id: int, trader_id: int):
+async def follow_copy_trader(
+    user_id: int,
+    trader_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
+    for trader in COPY_TRADERS:
+        if trader["trader_id"] == trader_id:
+            trader["followers"] += 1
+            _persist_state(STATE_KEYS["copy_traders"], COPY_TRADERS)
+            break
     return {"success": True, "message": f"Now copying trades from trader {trader_id}"}
 
 # Loyalty endpoints
 @app.get("/loyalty/{user_id}")
-async def get_loyalty_points(user_id: int):
+async def get_loyalty_points(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     for lp in LOYALTY_POINTS:
         if lp["user_id"] == user_id:
             return lp
     return {"error": "Loyalty points not found"}
 
 @app.post("/loyalty/{user_id}/add-points")
-async def add_loyalty_points(user_id: int, points: int):
+async def add_loyalty_points(
+    user_id: int,
+    points: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     for lp in LOYALTY_POINTS:
         if lp["user_id"] == user_id:
             lp["points"] += points
@@ -933,25 +1331,39 @@ async def add_loyalty_points(user_id: int, points: int):
                 lp["tier"] = "gold"
             elif lp["points"] >= 1000:
                 lp["tier"] = "silver"
+            _persist_state(STATE_KEYS["loyalty_points"], LOYALTY_POINTS)
             return {"success": True, "new_points": lp["points"], "tier": lp["tier"]}
     return {"error": "User not found"}
 
 # Analytics endpoints
 @app.get("/analytics/{user_id}/{analytics_type}")
-async def get_analytics(user_id: int, analytics_type: str):
+async def get_analytics(
+    user_id: int,
+    analytics_type: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     analytics = [a for a in ANALYTICS_DATA if a["user_id"] == user_id and a["type"] == analytics_type]
     return analytics if analytics else {"error": "Analytics not found"}
 
 # Settings endpoints
 @app.get("/settings/{user_id}")
-async def get_settings(user_id: int):
+async def get_settings(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     for setting in SETTINGS_DATA:
         if setting["user_id"] == user_id:
             return setting
     return {"error": "Settings not found"}
 
 @app.post("/settings/{user_id}/update")
-async def update_settings(user_id: int, dark_mode: bool = None, language: str = None, notifications_enabled: bool = None):
+async def update_settings(
+    user_id: int,
+    dark_mode: bool = None,
+    language: str = None,
+    notifications_enabled: bool = None,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
     for setting in SETTINGS_DATA:
         if setting["user_id"] == user_id:
             if dark_mode is not None:
@@ -960,8 +1372,44 @@ async def update_settings(user_id: int, dark_mode: bool = None, language: str = 
                 setting["language"] = language
             if notifications_enabled is not None:
                 setting["notifications_enabled"] = notifications_enabled
+            _persist_state(STATE_KEYS["settings_data"], SETTINGS_DATA)
             return {"success": True, "settings": setting}
     return {"error": "Settings not found"}
+
+
+@app.get("/external/news")
+async def external_news(query: str = "technology"):
+    news_api_key = os.getenv("NEWSAPI_KEY", "").strip()
+    if not news_api_key:
+        return {"items": [], "source": "newsapi", "note": "Set NEWSAPI_KEY to enable live news"}
+
+    encoded_query = urllib.parse.quote(query)
+    url = (
+        "https://newsapi.org/v2/everything"
+        f"?q={encoded_query}&language=en&sortBy=publishedAt&pageSize=20&apiKey={news_api_key}"
+    )
+    payload = _fetch_json(url)
+    if not isinstance(payload, dict):
+        return {"items": [], "source": "newsapi", "note": "News API unavailable"}
+
+    items = payload.get("articles", [])
+    return {"items": items if isinstance(items, list) else [], "source": "newsapi"}
+
+
+@app.get("/external/photos")
+async def external_photos(query: str = "market"):
+    pexels_key = os.getenv("PEXELS_API_KEY", "").strip()
+    if not pexels_key:
+        return {"items": [], "source": "pexels", "note": "Set PEXELS_API_KEY to enable live photos"}
+
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://api.pexels.com/v1/search?query={encoded_query}&per_page=20&page=1"
+    payload = _fetch_json(url, headers={"Authorization": pexels_key})
+    if not isinstance(payload, dict):
+        return {"items": [], "source": "pexels", "note": "Pexels API unavailable"}
+
+    items = payload.get("photos", [])
+    return {"items": items if isinstance(items, list) else [], "source": "pexels"}
 
 # Root endpoint
 @app.get("/")
