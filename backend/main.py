@@ -1,21 +1,26 @@
-﻿from fastapi import Depends, FastAPI, HTTPException
+﻿from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
+from uuid import uuid4
 import os
 import urllib.parse
 import urllib.request
 import json
 
 try:
-    from .auth_db import init_auth_db
+    from .auth_db import get_user_by_id, init_auth_db
     from .auth_routes import get_current_user, router as auth_router
+    from .auth_tokens import decode_token
     from .state_db import get_state, init_state_db, seed_state, set_state
 except ImportError:
-    from auth_db import init_auth_db
+    from auth_db import get_user_by_id, init_auth_db
     from auth_routes import get_current_user, router as auth_router
+    from auth_tokens import decode_token
     from state_db import get_state, init_state_db, seed_state, set_state
 
 app = FastAPI(title="Social Commerce App", description="Social Media + E-Commerce (Amazon, Temu, Facebook Marketplace style)")
@@ -32,6 +37,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+BACKEND_DIR = Path(__file__).resolve().parent
+UPLOADS_DIR = BACKEND_DIR / "uploads"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+MEDIA_BASE_URL = os.getenv("MEDIA_BASE_URL", "http://localhost:8000").rstrip("/")
+
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 STATE_KEYS = {
     "posts": "posts",
@@ -53,6 +65,9 @@ STATE_KEYS = {
     "loyalty_points": "loyalty_points",
     "analytics_data": "analytics_data",
     "settings_data": "settings_data",
+    "payment_intents": "payment_intents",
+    "live_shopping_events": "live_shopping_events",
+    "support_messages": "support_messages",
 }
 
 EXTERNAL_TIMEOUT_SECONDS = 6
@@ -61,9 +76,13 @@ LIVE_STOCK_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "
 
 def _to_jsonable(value: Any) -> Any:
     if isinstance(value, BaseModel):
-        if hasattr(value, "model_dump"):
-            return value.model_dump()
-        return value.dict()
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return model_dump()
+        to_dict = getattr(value, "dict", None)
+        if callable(to_dict):
+            return to_dict()
+        return value
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, list):
@@ -75,6 +94,88 @@ def _to_jsonable(value: Any) -> Any:
 
 def _persist_state(key: str, value: Any) -> None:
     set_state(key, _to_jsonable(value))
+
+
+def _build_media_url(folder: str, filename: str) -> str:
+    return f"{MEDIA_BASE_URL}/uploads/{folder}/{filename}"
+
+
+def _save_upload_file(upload: UploadFile, folder: str, allowed_prefixes: List[str]) -> str:
+    content_type = (upload.content_type or "").lower()
+    if not any(content_type.startswith(prefix) for prefix in allowed_prefixes):
+        allowed = ", ".join(allowed_prefixes)
+        raise HTTPException(status_code=400, detail=f"Unsupported media type. Expected: {allowed}")
+
+    extension = Path(upload.filename or "").suffix.lower()
+    if not extension:
+        extension = ".bin"
+    safe_name = f"{uuid4().hex}{extension}"
+    target_dir = UPLOADS_DIR / folder
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / safe_name
+
+    upload.file.seek(0)
+    with open(target_path, "wb") as handle:
+        handle.write(upload.file.read())
+
+    return _build_media_url(folder, safe_name)
+
+
+def _message_to_payload(msg: Any) -> Dict[str, Any]:
+    return {
+        "id": msg.id,
+        "sender_id": msg.sender_id,
+        "receiver_id": msg.receiver_id,
+        "sender_name": msg.sender_name,
+        "content": msg.content,
+        "timestamp": msg.timestamp,
+        "read": msg.read,
+    }
+
+
+class ChatConnectionManager:
+    def __init__(self) -> None:
+        self.active_connections: Dict[int, List[WebSocket]] = {}
+
+    async def connect(self, user_id: int, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self.active_connections.setdefault(user_id, []).append(websocket)
+
+    def disconnect(self, user_id: int, websocket: WebSocket) -> None:
+        connections = self.active_connections.get(user_id, [])
+        if websocket in connections:
+            connections.remove(websocket)
+        if not connections and user_id in self.active_connections:
+            del self.active_connections[user_id]
+
+    async def send_to(self, user_id: int, payload: Dict[str, Any]) -> None:
+        for conn in list(self.active_connections.get(user_id, [])):
+            try:
+                await conn.send_json(payload)
+            except Exception:
+                self.disconnect(user_id, conn)
+
+
+CHAT_WS_MANAGER = ChatConnectionManager()
+
+
+def _user_from_access_token(access_token: str) -> Dict[str, Any]:
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Missing access token.")
+
+    try:
+        payload = decode_token(access_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Invalid token type.")
+
+    user_id = int(payload.get("sub", "0"))
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found.")
+    return user
 
 
 def _fetch_json(url: str, headers: Optional[Dict[str, str]] = None) -> Optional[Any]:
@@ -387,6 +488,7 @@ def _hydrate_all_state() -> None:
     global POSTS, MESSAGES, STORIES, PRODUCTS_REVIEW, CART, ORDERS, WATCHLISTS, TRADES, PORTFOLIOS
     global NOTIFICATIONS, REVIEWS, WISHLISTS, WALLETS, CHAT_MESSAGES, FOLLOWS
     global COPY_TRADERS, LOYALTY_POINTS, ANALYTICS_DATA, SETTINGS_DATA
+    global PAYMENT_INTENTS, LIVE_SHOPPING_EVENTS, SUPPORT_MESSAGES
 
     POSTS = _hydrate_model_list(STATE_KEYS["posts"], Post, POSTS)
     MESSAGES = _hydrate_model_list(STATE_KEYS["messages"], Message, MESSAGES)
@@ -407,6 +509,9 @@ def _hydrate_all_state() -> None:
     LOYALTY_POINTS = _hydrate_primitive_list(STATE_KEYS["loyalty_points"], LOYALTY_POINTS)
     ANALYTICS_DATA = _hydrate_primitive_list(STATE_KEYS["analytics_data"], ANALYTICS_DATA)
     SETTINGS_DATA = _hydrate_primitive_list(STATE_KEYS["settings_data"], SETTINGS_DATA)
+    PAYMENT_INTENTS = _hydrate_primitive_list(STATE_KEYS["payment_intents"], PAYMENT_INTENTS)
+    LIVE_SHOPPING_EVENTS = _hydrate_primitive_list(STATE_KEYS["live_shopping_events"], LIVE_SHOPPING_EVENTS)
+    SUPPORT_MESSAGES = _hydrate_primitive_list(STATE_KEYS["support_messages"], SUPPORT_MESSAGES)
 
 
 def _remove_legacy_seeded_mock_data() -> None:
@@ -636,6 +741,7 @@ class Trade(BaseModel):
 
 class CheckoutRequest(BaseModel):
     address: str
+    payment_intent_id: Optional[str] = None
 
 
 class AmountRequest(BaseModel):
@@ -672,6 +778,39 @@ class StoryCreateRequest(BaseModel):
 class CreatePostRequest(BaseModel):
     content: str
     image: Optional[str] = None
+
+
+class PaymentIntentRequest(BaseModel):
+    user_id: int
+    amount: float
+    currency: str = "usd"
+    gateway: str = "mockpay"
+
+
+class PaymentConfirmRequest(BaseModel):
+    intent_id: str
+    user_id: int
+
+
+class LiveShoppingEventRequest(BaseModel):
+    seller_id: int
+    title: str
+    product_ids: List[int]
+    starts_at: str
+    stream_url: Optional[str] = None
+
+
+class SupportChatRequest(BaseModel):
+    user_id: int
+    message: str
+
+
+class OptionsTradeRequest(BaseModel):
+    user_id: int
+    contract_symbol: str
+    contracts: int
+    premium: float
+    side: str = "buy"
 
 USERS = {
     1: User(id=1, username="john_doe", name="John Doe", avatar="https://via.placeholder.com/50", bio="Travel enthusiast ðŸŒ", followers=1250, following=340),
@@ -870,6 +1009,10 @@ async def send_message(
         )
     )
     _persist_state(STATE_KEYS["messages"], MESSAGES)
+    envelope = {"type": "message", "message": _message_to_payload(MESSAGES[-1])}
+    await CHAT_WS_MANAGER.send_to(sender_id, envelope)
+    if payload.receiver_id != sender_id:
+        await CHAT_WS_MANAGER.send_to(payload.receiver_id, envelope)
     return {"success": True, "message_id": new_id}
 
 @app.get("/conversations")
@@ -917,11 +1060,96 @@ async def upload_story(
     _persist_state(STATE_KEYS["stories"], STORIES)
     return {"success": True, "story_id": new_id}
 
+
+@app.post("/media/upload")
+async def upload_media(
+    file: UploadFile = File(...),
+    folder: str = Form("general"),
+    media_kind: str = Form("image"),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    safe_folder = "".join(ch for ch in folder.lower() if ch.isalnum() or ch in {"-", "_"}).strip() or "general"
+    safe_kind = media_kind.strip().lower()
+    allowed = ["video/"] if safe_kind == "video" else ["image/"]
+    media_url = _save_upload_file(file, f"{safe_folder}/{int(current_user['id'])}", allowed)
+    return {"success": True, "media_url": media_url, "media_kind": safe_kind}
+
+
+@app.post("/posts/upload")
+async def create_post_with_upload(
+    content: str = Form(...),
+    file: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    image_url = _save_upload_file(file, f"posts/{int(current_user['id'])}", ["image/"])
+    payload = CreatePostRequest(content=content, image=image_url)
+    return await create_post(payload, current_user)
+
+
+@app.post("/stories/upload")
+async def upload_story_with_media(
+    file: UploadFile = File(...),
+    media_kind: str = Form("image"),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    safe_kind = media_kind.strip().lower()
+    allowed = ["video/"] if safe_kind == "video" else ["image/"]
+    media_url = _save_upload_file(file, f"stories/{int(current_user['id'])}", allowed)
+    payload = StoryCreateRequest(image=media_url)
+    response = await upload_story(payload, current_user)
+    return {**response, "media_kind": safe_kind}
+
+
+@app.websocket("/ws/chat/{user_id}")
+async def websocket_chat(user_id: int, websocket: WebSocket, token: str = Query(default="")):
+    try:
+        authed_user = _user_from_access_token(token)
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=exc.detail)
+        return
+
+    if int(authed_user["id"]) != int(user_id):
+        await websocket.close(code=1008, reason="Forbidden user scope.")
+        return
+
+    await CHAT_WS_MANAGER.connect(user_id, websocket)
+    await websocket.send_json({"type": "connected", "user_id": user_id})
+
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            receiver_id = int(payload.get("receiver_id", 0))
+            content = str(payload.get("content", "")).strip()
+            if receiver_id <= 0 or not content:
+                await websocket.send_json({"type": "error", "detail": "receiver_id and content are required."})
+                continue
+
+            new_id = max((m.id for m in MESSAGES), default=0) + 1
+            stamp = datetime.now().strftime("%H:%M")
+            sender_name = str(authed_user.get("full_name") or authed_user.get("username") or "User")
+            message = Message(
+                id=new_id,
+                sender_id=user_id,
+                receiver_id=receiver_id,
+                sender_name=sender_name,
+                content=content,
+                timestamp=stamp,
+                read=False,
+            )
+            MESSAGES.append(message)
+            _persist_state(STATE_KEYS["messages"], MESSAGES)
+
+            envelope = {"type": "message", "message": _message_to_payload(message)}
+            await CHAT_WS_MANAGER.send_to(user_id, envelope)
+            if receiver_id != user_id:
+                await CHAT_WS_MANAGER.send_to(receiver_id, envelope)
+    except WebSocketDisconnect:
+        CHAT_WS_MANAGER.disconnect(user_id, websocket)
+
 # ========== E-COMMERCE ENDPOINTS ==========
 
 # Product endpoints
-@app.get("/products", response_model=List[Product])
-async def get_products(category: str = "", search: str = ""):
+def _catalog_products() -> List[Product]:
     external = _fetch_json("https://dummyjson.com/products?limit=60")
     if isinstance(external, dict):
         payload = external.get("products", [])
@@ -930,12 +1158,17 @@ async def get_products(category: str = "", search: str = ""):
             for item in payload:
                 if not isinstance(item, dict):
                     continue
+                item_id = int(item.get("id", 0))
+                seller = SELLERS[item_id % len(SELLERS)] if SELLERS else None
+                seller_id = seller.id if seller else 1
+                seller_name = seller.shop_name if seller else str(item.get("brand") or "Marketplace Seller")
+                seller_avatar = seller.shop_avatar if seller else "https://ui-avatars.com/api/?name=Seller&background=0f172a&color=ffffff"
                 live_products.append(
                     Product(
-                        id=int(item.get("id", 0)),
-                        seller_id=1,
-                        seller_name=str(item.get("brand") or "Marketplace Seller"),
-                        seller_avatar="https://ui-avatars.com/api/?name=Seller&background=0f172a&color=ffffff",
+                        id=item_id,
+                        seller_id=seller_id,
+                        seller_name=seller_name,
+                        seller_avatar=seller_avatar,
                         name=str(item.get("title", "Product")),
                         description=str(item.get("description", "")),
                         price=float(item.get("price", 0)),
@@ -951,24 +1184,24 @@ async def get_products(category: str = "", search: str = ""):
                         estimated_delivery="3-6 days",
                     )
                 )
+            if live_products:
+                return live_products
+    return PRODUCTS
 
-            products: List[Product] = live_products
-            if category:
-                products = [p for p in products if p.category.lower() == category.lower()]
-            if search:
-                products = [p for p in products if search.lower() in p.name.lower() or search.lower() in p.description.lower()]
-            return products
 
-    products = PRODUCTS
+@app.get("/products", response_model=List[Product])
+async def get_products(category: str = "", search: str = ""):
+    products = _catalog_products()
     if category:
         products = [p for p in products if p.category.lower() == category.lower()]
     if search:
         products = [p for p in products if search.lower() in p.name.lower() or search.lower() in p.description.lower()]
     return products
 
+
 @app.get("/products/{product_id}", response_model=Product)
 async def get_product(product_id: int):
-    for product in PRODUCTS:
+    for product in _catalog_products():
         if product.id == product_id:
             return product
     return {"error": "Product not found"}
@@ -998,7 +1231,7 @@ async def get_seller(seller_id: int):
 
 @app.get("/sellers/{seller_id}/products", response_model=List[Product])
 async def get_seller_products(seller_id: int):
-    return [p for p in PRODUCTS if p.seller_id == seller_id]
+    return [p for p in _catalog_products() if p.seller_id == seller_id]
 
 # Cart endpoints
 @app.get("/cart/{user_id}")
@@ -1044,6 +1277,19 @@ async def checkout(
         return {"error": "Cart is empty"}
     
     total = sum(item.quantity * item.price for item in CART[user_id])
+    payment_status = "not_required"
+    if payload.payment_intent_id:
+        matched = next((p for p in PAYMENT_INTENTS if p["intent_id"] == payload.payment_intent_id), None)
+        if not matched:
+            return {"error": "Payment intent not found"}
+        if int(matched["user_id"]) != int(user_id):
+            return {"error": "Payment intent user mismatch"}
+        if matched["status"] != "confirmed":
+            return {"error": "Payment is not confirmed"}
+        if float(matched["amount"]) + 0.001 < float(total):
+            return {"error": "Payment amount is lower than checkout total"}
+        payment_status = matched["status"]
+
     order_id = max([o.id for o in ORDERS]) + 1 if ORDERS else 1
     order = Order(
         id=order_id,
@@ -1059,7 +1305,13 @@ async def checkout(
     CART[user_id] = []
     _persist_state(STATE_KEYS["orders"], ORDERS)
     _persist_state(STATE_KEYS["cart"], CART)
-    return {"success": True, "order_id": order_id, "total": total, "status": OrderStatus.PENDING}
+    return {
+        "success": True,
+        "order_id": order_id,
+        "total": total,
+        "status": OrderStatus.PENDING,
+        "payment_status": payment_status,
+    }
 
 @app.get("/orders/{user_id}")
 async def get_user_orders(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
@@ -1086,7 +1338,7 @@ async def cancel_order(order_id: int):
 # Categories endpoint
 @app.get("/categories")
 async def get_categories():
-    categories = set(p.category for p in PRODUCTS)
+    categories = set(p.category for p in _catalog_products())
     return {"categories": list(categories)}
 
 # ========== STOCKS & FOREX ENDPOINTS ==========
@@ -1275,7 +1527,7 @@ class Notification(BaseModel):
     read: bool
     created_at: str
 
-class Review(BaseModel):
+class CommunityReview(BaseModel):
     id: int
     product_id: int
     user_id: int
@@ -1419,6 +1671,18 @@ SETTINGS_DATA = [
     {"id": 2, "user_id": 2, "dark_mode": True, "language": "es", "notifications_enabled": True, "created_at": "2026-01-01"},
 ]
 
+PAYMENT_INTENTS: List[Dict[str, Any]] = []
+
+LIVE_SHOPPING_EVENTS: List[Dict[str, Any]] = []
+
+SUPPORT_MESSAGES: List[Dict[str, Any]] = []
+
+OPTIONS_CONTRACTS: List[Dict[str, Any]] = [
+    {"id": 1, "symbol": "AAPL260320C00220000", "underlying": "AAPL", "type": "call", "strike": 220.0, "expiry": "2026-03-20", "premium": 4.15},
+    {"id": 2, "symbol": "MSFT260320P00400000", "underlying": "MSFT", "type": "put", "strike": 400.0, "expiry": "2026-03-20", "premium": 5.80},
+    {"id": 3, "symbol": "NVDA260320C00950000", "underlying": "NVDA", "type": "call", "strike": 950.0, "expiry": "2026-03-20", "premium": 12.25},
+]
+
 # Notification endpoints
 @app.get("/notifications/{user_id}")
 async def get_notifications(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
@@ -1445,21 +1709,21 @@ async def get_unread_count(user_id: int, current_user: Dict[str, Any] = Depends(
     count = len([n for n in NOTIFICATIONS if n["user_id"] == user_id and not n["read"]])
     return {"unread_count": count}
 
-# Review endpoints
-@app.get("/products/{product_id}/reviews")
-async def get_product_reviews(product_id: int):
+# Community review endpoints
+@app.get("/products/{product_id}/community-reviews")
+async def get_product_community_reviews(product_id: int):
     return [r for r in REVIEWS if r["product_id"] == product_id]
 
-@app.post("/products/{product_id}/reviews")
-async def add_review(product_id: int, user_id: int, username: str, rating: int, comment: str):
+@app.post("/products/{product_id}/community-reviews")
+async def add_product_community_review(product_id: int, user_id: int, username: str, rating: int, comment: str):
     new_id = max([r["id"] for r in REVIEWS]) + 1 if REVIEWS else 1
     review = {"id": new_id, "product_id": product_id, "user_id": user_id, "username": username, "rating": rating, "comment": comment, "helpful_count": 0, "created_at": "2026-02-22"}
     REVIEWS.append(review)
     _persist_state(STATE_KEYS["reviews"], REVIEWS)
     return {"success": True, "review_id": new_id}
 
-@app.post("/reviews/{review_id}/helpful")
-async def mark_review_helpful(review_id: int):
+@app.post("/community-reviews/{review_id}/helpful")
+async def mark_community_review_helpful(review_id: int):
     for review in REVIEWS:
         if review["id"] == review_id:
             review["helpful_count"] += 1
@@ -1472,11 +1736,12 @@ async def mark_review_helpful(review_id: int):
 async def get_wishlist(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
     _require_user_access(user_id, current_user)
     wishlist_items = [w for w in WISHLISTS if w["user_id"] == user_id]
+    catalog_by_id = {p.id: p for p in _catalog_products()}
     result = []
     for item in wishlist_items:
-        for product in PRODUCTS:
-            if product.id == item["product_id"]:
-                result.append({**item, "product": product})
+        product = catalog_by_id.get(int(item["product_id"]))
+        if product:
+            result.append({**item, "product": product})
     return result
 
 @app.post("/wishlists/{user_id}/add/{product_id}")
@@ -1762,6 +2027,367 @@ async def update_settings(
     return {"error": "Settings not found"}
 
 
+def _require_seller_access(seller_id: int, current_user: Dict[str, Any]) -> Seller:
+    seller = next((s for s in SELLERS if s.id == seller_id), None)
+    if not seller:
+        raise HTTPException(status_code=404, detail="Seller not found.")
+    if int(seller.user_id) != int(current_user["id"]):
+        raise HTTPException(status_code=403, detail="Forbidden seller scope.")
+    return seller
+
+
+@app.post("/payments/create-intent")
+async def create_payment_intent(
+    payload: PaymentIntentRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(payload.user_id, current_user)
+    if payload.amount <= 0:
+        return {"error": "Amount must be greater than zero"}
+
+    intent_id = f"pi_{uuid4().hex[:20]}"
+    client_secret = f"{intent_id}_secret_{uuid4().hex[:16]}"
+    gateway = payload.gateway.strip().lower() or "mockpay"
+    currency = payload.currency.strip().lower() or "usd"
+    intent = {
+        "intent_id": intent_id,
+        "client_secret": client_secret,
+        "user_id": payload.user_id,
+        "amount": round(payload.amount, 2),
+        "currency": currency,
+        "gateway": gateway,
+        "status": "requires_confirmation",
+        "created_at": datetime.utcnow().isoformat(),
+        "confirmed_at": None,
+    }
+    PAYMENT_INTENTS.append(intent)
+    _persist_state(STATE_KEYS["payment_intents"], PAYMENT_INTENTS)
+    return intent
+
+
+@app.post("/payments/confirm")
+async def confirm_payment_intent(
+    payload: PaymentConfirmRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(payload.user_id, current_user)
+    intent = next((p for p in PAYMENT_INTENTS if p["intent_id"] == payload.intent_id), None)
+    if not intent:
+        return {"error": "Payment intent not found"}
+    if int(intent["user_id"]) != int(payload.user_id):
+        return {"error": "Payment intent user mismatch"}
+
+    intent["status"] = "confirmed"
+    intent["confirmed_at"] = datetime.utcnow().isoformat()
+    _persist_state(STATE_KEYS["payment_intents"], PAYMENT_INTENTS)
+    return intent
+
+
+@app.get("/payments/{user_id}")
+async def list_user_payments(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
+    return [p for p in PAYMENT_INTENTS if int(p["user_id"]) == int(user_id)]
+
+
+@app.get("/seller/{seller_id}/dashboard")
+async def get_seller_dashboard(seller_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_seller_access(seller_id, current_user)
+    seller_products = [p for p in _catalog_products() if p.seller_id == seller_id]
+    product_ids = {p.id for p in seller_products}
+
+    seller_orders: List[Dict[str, Any]] = []
+    revenue = 0.0
+    for order in ORDERS:
+        matched_items = [item for item in order.items if item.product_id in product_ids]
+        if not matched_items:
+            continue
+        subtotal = sum(item.quantity * item.price for item in matched_items)
+        revenue += subtotal
+        seller_orders.append(
+            {
+                "order_id": order.id,
+                "buyer_id": order.user_id,
+                "status": order.status,
+                "subtotal": round(subtotal, 2),
+                "created_at": order.created_at,
+            }
+        )
+
+    ratings: List[float] = []
+    for review in PRODUCTS_REVIEW:
+        if review.product_id in product_ids:
+            ratings.append(float(review.rating))
+    for review in REVIEWS:
+        if review["product_id"] in product_ids:
+            ratings.append(float(review["rating"]))
+
+    total_quantity_by_product: Dict[int, int] = {pid: 0 for pid in product_ids}
+    for order in ORDERS:
+        for item in order.items:
+            if item.product_id in total_quantity_by_product:
+                total_quantity_by_product[item.product_id] += int(item.quantity)
+    top_products = sorted(
+        [
+            {
+                "product_id": p.id,
+                "name": p.name,
+                "units_sold": total_quantity_by_product.get(p.id, 0),
+                "price": p.price,
+            }
+            for p in seller_products
+        ],
+        key=lambda item: item["units_sold"],
+        reverse=True,
+    )[:5]
+
+    return {
+        "seller_id": seller_id,
+        "products_count": len(seller_products),
+        "orders_count": len(seller_orders),
+        "total_revenue": round(revenue, 2),
+        "average_rating": round(sum(ratings) / len(ratings), 2) if ratings else 0.0,
+        "top_products": top_products,
+        "recent_orders": seller_orders[-10:],
+    }
+
+
+@app.get("/seller/{seller_id}/orders")
+async def get_seller_orders(seller_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_seller_access(seller_id, current_user)
+    product_ids = {p.id for p in _catalog_products() if p.seller_id == seller_id}
+    results = []
+    for order in ORDERS:
+        matched_items = [item for item in order.items if item.product_id in product_ids]
+        if matched_items:
+            results.append(
+                {
+                    "order_id": order.id,
+                    "buyer_id": order.user_id,
+                    "items": matched_items,
+                    "status": order.status,
+                    "created_at": order.created_at,
+                }
+            )
+    return results
+
+
+@app.get("/recommendations/{user_id}")
+async def get_recommendations(
+    user_id: int,
+    limit: int = Query(default=12, ge=1, le=40),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(user_id, current_user)
+    products = _catalog_products()
+    if not products:
+        return []
+
+    by_id = {p.id: p for p in products}
+    category_interest: Dict[str, float] = {}
+    excluded: set = set()
+
+    for item in CART.get(user_id, []):
+        product = by_id.get(item.product_id)
+        if not product:
+            continue
+        category_interest[product.category] = category_interest.get(product.category, 0.0) + 1.0
+        excluded.add(product.id)
+
+    for wl in WISHLISTS:
+        if int(wl["user_id"]) != int(user_id):
+            continue
+        product = by_id.get(int(wl["product_id"]))
+        if not product:
+            continue
+        category_interest[product.category] = category_interest.get(product.category, 0.0) + 1.5
+        excluded.add(product.id)
+
+    for order in ORDERS:
+        if int(order.user_id) != int(user_id):
+            continue
+        for item in order.items:
+            product = by_id.get(item.product_id)
+            if not product:
+                continue
+            category_interest[product.category] = category_interest.get(product.category, 0.0) + 2.0
+            excluded.add(product.id)
+
+    def score(product: Product) -> float:
+        popularity = min(float(product.sold) / 200.0, 5.0)
+        rating = float(product.rating)
+        affinity = category_interest.get(product.category, 0.0)
+        return affinity + rating + popularity
+
+    ranked = sorted(
+        [p for p in products if p.id not in excluded],
+        key=score,
+        reverse=True,
+    )
+    return ranked[:limit]
+
+
+@app.get("/stories/video")
+async def get_video_stories():
+    return [s for s in STORIES if str(s.image).lower().endswith((".mp4", ".mov", ".webm", ".m4v"))]
+
+
+@app.get("/live-shopping/events")
+async def list_live_shopping_events(status: str = ""):
+    if not status:
+        return LIVE_SHOPPING_EVENTS
+    return [e for e in LIVE_SHOPPING_EVENTS if e["status"] == status]
+
+
+@app.post("/live-shopping/events")
+async def create_live_shopping_event(
+    payload: LiveShoppingEventRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_seller_access(payload.seller_id, current_user)
+    new_id = max((event["id"] for event in LIVE_SHOPPING_EVENTS), default=0) + 1
+    event = {
+        "id": new_id,
+        "seller_id": payload.seller_id,
+        "title": payload.title.strip(),
+        "product_ids": payload.product_ids,
+        "starts_at": payload.starts_at,
+        "status": "scheduled",
+        "viewer_count": 0,
+        "stream_url": payload.stream_url or f"{MEDIA_BASE_URL}/live/{new_id}",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    LIVE_SHOPPING_EVENTS.append(event)
+    _persist_state(STATE_KEYS["live_shopping_events"], LIVE_SHOPPING_EVENTS)
+    return event
+
+
+@app.post("/live-shopping/events/{event_id}/go-live")
+async def set_live_shopping_status_live(
+    event_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    event = next((e for e in LIVE_SHOPPING_EVENTS if e["id"] == event_id), None)
+    if not event:
+        return {"error": "Event not found"}
+    _require_seller_access(int(event["seller_id"]), current_user)
+    event["status"] = "live"
+    _persist_state(STATE_KEYS["live_shopping_events"], LIVE_SHOPPING_EVENTS)
+    return event
+
+
+@app.post("/live-shopping/events/{event_id}/join")
+async def join_live_shopping_event(event_id: int):
+    event = next((e for e in LIVE_SHOPPING_EVENTS if e["id"] == event_id), None)
+    if not event:
+        return {"error": "Event not found"}
+    event["viewer_count"] = int(event.get("viewer_count", 0)) + 1
+    _persist_state(STATE_KEYS["live_shopping_events"], LIVE_SHOPPING_EVENTS)
+    return event
+
+
+def _build_support_reply(user_id: int, message: str) -> str:
+    text = message.lower().strip()
+    if not text:
+        return "Tell me what you need help with, like order status, refunds, or payment issues."
+
+    if "order" in text and "status" in text:
+        latest = next((o for o in reversed(ORDERS) if int(o.user_id) == int(user_id)), None)
+        if latest:
+            return f"Your latest order #{latest.id} is currently {latest.status}."
+        return "I could not find any orders yet. Place an order first and I can track it."
+
+    if "refund" in text or "cancel" in text:
+        return "Refunds can be requested while an order is pending. Use the cancel order endpoint for fast processing."
+
+    if "shipping" in text or "delivery" in text:
+        return "Most orders arrive in 3-6 business days. You can check exact ETA from the orders screen."
+
+    if "payment" in text:
+        return "Payment support is active. Create an intent, confirm it, then checkout with payment_intent_id."
+
+    return "Support can help with orders, shipping, refunds, and payment. Ask me a specific question."
+
+
+@app.post("/support/chat")
+async def support_chat(
+    payload: SupportChatRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(payload.user_id, current_user)
+    reply = _build_support_reply(payload.user_id, payload.message)
+    entry = {
+        "id": max((m["id"] for m in SUPPORT_MESSAGES), default=0) + 1,
+        "user_id": payload.user_id,
+        "message": payload.message,
+        "reply": reply,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    SUPPORT_MESSAGES.append(entry)
+    _persist_state(STATE_KEYS["support_messages"], SUPPORT_MESSAGES)
+    return entry
+
+
+@app.get("/support/chat/{user_id}")
+async def get_support_history(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
+    return [m for m in SUPPORT_MESSAGES if int(m["user_id"]) == int(user_id)]
+
+
+@app.get("/options/contracts")
+async def get_options_contracts(underlying: str = ""):
+    if not underlying:
+        return OPTIONS_CONTRACTS
+    return [c for c in OPTIONS_CONTRACTS if c["underlying"].upper() == underlying.upper()]
+
+
+@app.post("/options/trade")
+async def trade_options(
+    payload: OptionsTradeRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_user_access(payload.user_id, current_user)
+    if payload.contracts <= 0 or payload.premium <= 0:
+        return {"error": "contracts and premium must be > 0"}
+
+    side = payload.side.strip().lower()
+    if side not in {"buy", "sell"}:
+        return {"error": "side must be buy or sell"}
+
+    total = float(payload.contracts) * float(payload.premium) * 100.0
+    portfolio = PORTFOLIOS.get(payload.user_id)
+    if not portfolio:
+        return {"error": "Portfolio not found"}
+
+    if side == "buy":
+        if portfolio.cash < total:
+            return {"error": "Insufficient cash"}
+        portfolio.cash -= total
+        portfolio.invested += total
+    else:
+        portfolio.cash += total
+        portfolio.invested = max(0.0, portfolio.invested - total)
+    portfolio.total_value = portfolio.cash + portfolio.invested
+
+    trade_id = max((t.id for t in TRADES), default=0) + 1
+    TRADES.append(
+        Trade(
+            id=trade_id,
+            user_id=payload.user_id,
+            symbol=payload.contract_symbol,
+            asset_name=payload.contract_symbol,
+            type=side,
+            quantity=payload.contracts,
+            price=payload.premium,
+            total_amount=total,
+            timestamp=datetime.utcnow().isoformat(),
+            asset_type="options",
+        )
+    )
+    _persist_state(STATE_KEYS["portfolios"], PORTFOLIOS)
+    _persist_state(STATE_KEYS["trades"], TRADES)
+    return {"success": True, "trade_id": trade_id, "side": side, "total_amount": total}
+
+
 @app.get("/external/news")
 async def external_news(query: str = "technology"):
     news_api_key = os.getenv("NEWSAPI_KEY", "").strip()
@@ -1801,8 +2427,28 @@ async def external_photos(query: str = "market"):
 async def root():
     return {
         "message": "Welcome to Social Commerce App API",
-        "version": "3.0.0",
-        "features": ["Social Media", "E-Commerce", "Messaging", "Stories", "Products", "Orders", "Stocks", "Forex", "Trading"]
+        "version": "4.0.0",
+        "features": [
+            "Social Media",
+            "E-Commerce",
+            "Messaging",
+            "Stories",
+            "Media Uploads",
+            "WebSocket Chat",
+            "Products",
+            "Recommendations",
+            "Orders",
+            "Payments",
+            "Seller Dashboard",
+            "Live Shopping",
+            "Support Chatbot",
+            "Stocks",
+            "Forex",
+            "Crypto",
+            "Options",
+            "Trading",
+        ],
     }
+
 
 

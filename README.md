@@ -113,6 +113,20 @@ Server runs on: `http://localhost:8000`
 - `POST /watchlists/{user_id}` - Create watchlist
 - `GET /trades/{user_id}` - Get trade history
 
+**New Platform Services:**
+- `WS /ws/chat/{user_id}?token=...` - Real-time chat stream
+- `POST /media/upload` - Upload image/video media
+- `POST /posts/upload` - Create post with uploaded image
+- `POST /stories/upload` - Create story with uploaded media
+- `POST /payments/create-intent` - Create payment intent
+- `POST /payments/confirm` - Confirm payment intent
+- `GET /seller/{seller_id}/dashboard` - Seller analytics dashboard
+- `GET /recommendations/{user_id}` - Personalized recommendations
+- `GET /live-shopping/events` - Live shopping events
+- `POST /support/chat` - Customer support chatbot
+- `GET /options/contracts` - Options chain contracts
+- `POST /options/trade` - Options trade execution
+
 ## Frontend Setup
 
 ```bash
@@ -121,6 +135,10 @@ cd Frontend
 
 # Install dependencies
 npm install
+
+# Optional: set backend URL for Expo
+# PowerShell:
+$env:EXPO_PUBLIC_API_BASE_URL="http://localhost:8000"
 
 # Run on Android
 npm run android
@@ -149,8 +167,8 @@ Bottom tab navigation:
 ## Technology Stack
 
 ### Frontend
-- React Native 0.76.0
-- Expo SDK 54
+- React Native 0.74.5
+- Expo SDK 51
 - TypeScript 5.3.3
 - React Native Safe Area Context
 
@@ -158,6 +176,7 @@ Bottom tab navigation:
 - FastAPI 0.104.1
 - Uvicorn 0.24.0
 - Pydantic 2.5.0
+- python-multipart 0.0.9
 
 ## Sample Data
 
@@ -207,20 +226,20 @@ npm run web        # Web browser
 
 ## Features Roadmap
 
-- [ ] Real-time WebSocket messaging
-- [ ] Image upload for posts and stories
-- [ ] Payment gateway integration
-- [ ] User authentication & authorization
-- [ ] Seller dashboard
-- [ ] Product recommendation engine
-- [ ] Video streaming for stories
-- [ ] Live shopping events
-- [ ] Customer support chatbot
-- [ ] Real-time stock quotes (API integration)
-- [ ] Advanced charting & technical analysis
-- [ ] Options trading
-- [ ] Crypto trading
-- [ ] Social trading / Copy trading
+- [x] Real-time WebSocket messaging
+- [x] Image/video upload for posts and stories
+- [x] Payment intent + confirmation flow
+- [x] User authentication & authorization
+- [x] Seller dashboard and seller orders
+- [x] Product recommendation engine
+- [x] Video stories endpoint
+- [x] Live shopping events
+- [x] Customer support chatbot
+- [x] Real-time stock quotes (API integration)
+- [x] Advanced charting & technical analysis
+- [x] Options trading
+- [x] Crypto trading
+- [x] Social trading / Copy trading
 
 ## API Documentation
 

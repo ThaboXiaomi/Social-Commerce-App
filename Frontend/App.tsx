@@ -29,7 +29,8 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE =
+  ((((globalThis as any)?.process?.env?.EXPO_PUBLIC_API_BASE_URL as string) || 'http://localhost:8000').trim() || 'http://localhost:8000').replace(/\/+$/, '');
 let ACCESS_TOKEN = '';
 let REFRESH_TOKEN = '';
 let ACTIVE_USER_ID = 1;

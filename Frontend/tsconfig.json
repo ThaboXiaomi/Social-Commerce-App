@@ -1,4 +1,4 @@
-{
+﻿{
   "compilerOptions": {
     "target": "ES2020",
     "useDefineForClassFields": true,
@@ -20,7 +20,7 @@
     "noEmit": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
-    "types": [],
+    "types": ["jest", "react", "react-native"],
     "baseUrl": ".",
     "paths": {
       "@/*": [
@@ -39,3 +39,4 @@
   ],
   "extends": "expo/tsconfig.base"
 }
+
