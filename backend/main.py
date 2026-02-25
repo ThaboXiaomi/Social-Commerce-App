@@ -23,7 +23,7 @@ except ImportError:
     from auth_tokens import decode_token
     from state_db import get_state, init_state_db, seed_state, set_state
 
-app = FastAPI(title="Social Commerce App", description="Social Media + E-Commerce (Amazon, Temu, Facebook Marketplace style)")
+app = FastAPI(title="UniHub API", description="Social Media + E-Commerce (Amazon, Temu, Facebook Marketplace style)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -2426,7 +2426,7 @@ async def external_photos(query: str = "market"):
 @app.get("/")
 async def root():
     return {
-        "message": "Welcome to Social Commerce App API",
+        "message": "Welcome to UniHub API",
         "version": "4.0.0",
         "features": [
             "Social Media",
@@ -2449,6 +2449,7 @@ async def root():
             "Trading",
         ],
     }
+
 
 
 

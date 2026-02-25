@@ -1,4 +1,4 @@
-# Social Commerce App
+﻿# UniHub
 
 A full-featured React Native app with integrated social media, e-commerce, and financial trading features combining WhatsApp, Instagram, Threads, Snapchat, Amazon, Temu, Facebook Marketplace, and trading platforms.
 
@@ -20,7 +20,7 @@ A full-featured React Native app with integrated social media, e-commerce, and f
 - **Search & Filter** - Find products by category or keyword
 
 ### Financial Trading
-- **Stock Market** 📈
+- **Stock Market** ðŸ“ˆ
   - Browse 6+ stocks with real-time pricing
   - View company fundamentals (P/E ratio, market cap, dividend yield)
   - 52-week highs/lows tracking
@@ -28,7 +28,7 @@ A full-featured React Native app with integrated social media, e-commerce, and f
   - Portfolio management with profit/loss tracking
   - Top gainers/losers rankings
 
-- **Forex Trading** 💱
+- **Forex Trading** ðŸ’±
   - Major currency pairs (EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CNY)
   - Real-time bid/ask spreads
   - Buy/Sell forex pairs
@@ -45,13 +45,13 @@ A full-featured React Native app with integrated social media, e-commerce, and f
 ## Structure
 
 ```
-├── Frontend/              # React Native app
-│   ├── App.tsx           # Main app with navigation
-│   ├── package.json      # Dependencies
-│   └── tsconfig.json     # TypeScript config
-└── backend/              # FastAPI server
-    ├── main.py          # API endpoints
-    └── requirements.txt # Python dependencies
+â”œâ”€â”€ Frontend/              # React Native app
+â”‚   â”œâ”€â”€ App.tsx           # Main app with navigation
+â”‚   â”œâ”€â”€ package.json      # Dependencies
+â”‚   â””â”€â”€ tsconfig.json     # TypeScript config
+â””â”€â”€ backend/              # FastAPI server
+    â”œâ”€â”€ main.py          # API endpoints
+    â””â”€â”€ requirements.txt # Python dependencies
 ```
 
 ## Backend Setup
@@ -153,16 +153,16 @@ npm start
 ## App Navigation
 
 Bottom tab navigation:
-- **🏠** Feed - View social media posts
-- **📈** Stocks - Stock market & trading
-- **🛍️** Shop - Browse products and sellers
-- **💬** Chat - Messaging and conversations
-- **👤** Profile - User profile and stats
+- **ðŸ ** Feed - View social media posts
+- **ðŸ“ˆ** Stocks - Stock market & trading
+- **ðŸ›ï¸** Shop - Browse products and sellers
+- **ðŸ’¬** Chat - Messaging and conversations
+- **ðŸ‘¤** Profile - User profile and stats
 
 *Additional access through menu:*
-- 💱 Forex - Currency trading
-- 🛒 Cart - Shopping cart management
-- 📦 Orders - Order history
+- ðŸ’± Forex - Currency trading
+- ðŸ›’ Cart - Shopping cart management
+- ðŸ“¦ Orders - Order history
 
 ## Technology Stack
 
@@ -192,13 +192,13 @@ The app comes with mock data including:
 ## Updates (v1.1.0)
 
 ### SDK & Dependencies Upgrade
-- ✅ Upgraded Expo from SDK 51 to **SDK 51** (simplified to stable version)
-- ✅ Updated React Native to **0.74.5** 
-- ✅ Added `babel-preset-expo` for proper Babel configuration
-- ✅ Fixed TypeScript configuration for Expo projects
-- ✅ Updated `app.json` with proper Expo configuration
-- ✅ Updated npm scripts to use `npx expo` for cross-platform compatibility
-- ✅ Improved performance and compatibility with React Native features
+- âœ… Upgraded Expo from SDK 51 to **SDK 51** (simplified to stable version)
+- âœ… Updated React Native to **0.74.5** 
+- âœ… Added `babel-preset-expo` for proper Babel configuration
+- âœ… Fixed TypeScript configuration for Expo projects
+- âœ… Updated `app.json` with proper Expo configuration
+- âœ… Updated npm scripts to use `npx expo` for cross-platform compatibility
+- âœ… Improved performance and compatibility with React Native features
 
 ### Configuration Changes
 - **app.json**: Added SDK version, platforms, Android/iOS specific settings
@@ -244,3 +244,4 @@ npm run web        # Web browser
 ## API Documentation
 
 Visit `http://localhost:8000/docs` for interactive API documentation (Swagger UI)
+
