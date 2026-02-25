@@ -1,4 +1,5 @@
-from fastapi import Depends, FastAPI, HTTPException
+﻿from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 from datetime import datetime
@@ -18,6 +19,19 @@ except ImportError:
     from state_db import get_state, init_state_db, seed_state, set_state
 
 app = FastAPI(title="Social Commerce App", description="Social Media + E-Commerce (Amazon, Temu, Facebook Marketplace style)")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+        "http://localhost:19006",
+        "http://127.0.0.1:19006",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 STATE_KEYS = {
     "posts": "posts",
@@ -42,6 +56,7 @@ STATE_KEYS = {
 }
 
 EXTERNAL_TIMEOUT_SECONDS = 6
+LIVE_STOCK_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "AMD"]
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -71,6 +86,236 @@ def _fetch_json(url: str, headers: Optional[Dict[str, str]] = None) -> Optional[
     except Exception:
         return None
     return None
+
+
+def _fetch_live_stocks() -> List[Any]:
+    symbols = ",".join(LIVE_STOCK_SYMBOLS)
+    payload = _fetch_json(f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbols}")
+    if not isinstance(payload, dict):
+        return []
+
+    quote_response = payload.get("quoteResponse", {})
+    results = quote_response.get("result", []) if isinstance(quote_response, dict) else []
+    if not isinstance(results, list):
+        return []
+
+    live_stocks: List[Any] = []
+    for idx, item in enumerate(results, start=1):
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol", "")).upper()
+        name = str(item.get("longName") or item.get("shortName") or symbol)
+        price = float(item.get("regularMarketPrice", 0) or 0)
+        change_amount = float(item.get("regularMarketChange", 0) or 0)
+        change_percent = float(item.get("regularMarketChangePercent", 0) or 0)
+        market_cap_raw = float(item.get("marketCap", 0) or 0)
+        volume_raw = float(item.get("regularMarketVolume", 0) or 0)
+
+        if price <= 0:
+            continue
+
+        market_cap = f"{market_cap_raw / 1_000_000_000_000:.2f}T" if market_cap_raw >= 1_000_000_000_000 else f"{market_cap_raw / 1_000_000_000:.2f}B"
+        volume = f"{volume_raw / 1_000_000:.1f}M" if volume_raw >= 1_000_000 else str(int(volume_raw))
+        high_52 = float(item.get("fiftyTwoWeekHigh", price) or price)
+        low_52 = float(item.get("fiftyTwoWeekLow", price) or price)
+        pe_ratio = float(item.get("trailingPE", 0) or 0)
+        dividend = float(item.get("trailingAnnualDividendYield", 0) or 0) * 100
+
+        # Basic synthetic short sparkline based on current move.
+        base = price - (change_amount * 3)
+        chart = [max(0.01, base + change_amount * step) for step in [0.2, 0.5, 0.8, 1.0, 1.1, 1.2, 1.3]]
+
+        live_stocks.append(
+            Stock(
+                id=idx,
+                symbol=symbol,
+                name=name,
+                price=price,
+                change=change_percent,
+                change_amount=change_amount,
+                market_cap=market_cap,
+                volume=volume,
+                high_52w=high_52,
+                low_52w=low_52,
+                pe_ratio=pe_ratio,
+                dividend_yield=dividend,
+                description=f"Live quote from Yahoo Finance for {symbol}.",
+                chart_data=chart,
+            )
+        )
+
+    return live_stocks
+
+
+def _calc_sma(values: List[float], period: int) -> List[Optional[float]]:
+    result: List[Optional[float]] = []
+    for idx in range(len(values)):
+        if idx + 1 < period:
+            result.append(None)
+            continue
+        window = values[idx + 1 - period : idx + 1]
+        result.append(sum(window) / period)
+    return result
+
+
+def _calc_ema(values: List[float], period: int) -> List[Optional[float]]:
+    result: List[Optional[float]] = []
+    if not values:
+        return result
+
+    multiplier = 2 / (period + 1)
+    ema_prev: Optional[float] = None
+    for idx, value in enumerate(values):
+        if idx + 1 < period:
+            result.append(None)
+            continue
+        if ema_prev is None:
+            ema_prev = sum(values[:period]) / period
+            result.append(ema_prev)
+            continue
+        ema_prev = (value - ema_prev) * multiplier + ema_prev
+        result.append(ema_prev)
+    return result
+
+
+def _calc_rsi(values: List[float], period: int = 14) -> List[Optional[float]]:
+    if len(values) < 2:
+        return [None for _ in values]
+
+    gains = [0.0]
+    losses = [0.0]
+    for idx in range(1, len(values)):
+        delta = values[idx] - values[idx - 1]
+        gains.append(max(delta, 0.0))
+        losses.append(abs(min(delta, 0.0)))
+
+    rsi: List[Optional[float]] = []
+    avg_gain = 0.0
+    avg_loss = 0.0
+    for idx in range(len(values)):
+        if idx < period:
+            rsi.append(None)
+            continue
+        if idx == period:
+            avg_gain = sum(gains[1 : period + 1]) / period
+            avg_loss = sum(losses[1 : period + 1]) / period
+        else:
+            avg_gain = ((avg_gain * (period - 1)) + gains[idx]) / period
+            avg_loss = ((avg_loss * (period - 1)) + losses[idx]) / period
+
+        if avg_loss == 0:
+            rsi.append(100.0)
+            continue
+
+        rs = avg_gain / avg_loss
+        rsi.append(100 - (100 / (1 + rs)))
+    return rsi
+
+
+def _fetch_stock_chart(symbol: str, chart_range: str, interval: str) -> Dict[str, Any]:
+    safe_range = chart_range if chart_range in {"1d", "5d", "1mo", "3mo", "6mo", "1y", "5y"} else "1mo"
+    safe_interval = interval if interval in {"1m", "5m", "15m", "30m", "1h", "1d", "1wk"} else "1d"
+    url = (
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbol)}"
+        f"?range={safe_range}&interval={safe_interval}"
+    )
+    payload = _fetch_json(url)
+    if not isinstance(payload, dict):
+        payload = None
+
+    chart = payload.get("chart", {}) if isinstance(payload, dict) else {}
+    results = chart.get("result", []) if isinstance(chart, dict) else []
+    timestamps: List[Any] = []
+    opens: List[Any] = []
+    highs: List[Any] = []
+    lows: List[Any] = []
+    closes: List[Any] = []
+    volumes: List[Any] = []
+
+    if isinstance(results, list) and results:
+        result = results[0]
+        timestamps = result.get("timestamp", []) if isinstance(result, dict) else []
+        indicators = result.get("indicators", {}) if isinstance(result, dict) else {}
+        quotes = indicators.get("quote", []) if isinstance(indicators, dict) else []
+        quote = quotes[0] if isinstance(quotes, list) and quotes else {}
+        opens = quote.get("open", []) if isinstance(quote, dict) else []
+        highs = quote.get("high", []) if isinstance(quote, dict) else []
+        lows = quote.get("low", []) if isinstance(quote, dict) else []
+        closes = quote.get("close", []) if isinstance(quote, dict) else []
+        volumes = quote.get("volume", []) if isinstance(quote, dict) else []
+
+    # Fallback: derive candles from Stooq daily CSV data if Yahoo returns no usable chart points.
+    if not timestamps:
+        stooq_symbol = f"{symbol.lower()}.us"
+        stooq_url = f"https://stooq.com/q/d/l/?s={urllib.parse.quote(stooq_symbol)}&i=d"
+        try:
+            with urllib.request.urlopen(stooq_url, timeout=EXTERNAL_TIMEOUT_SECONDS) as response:
+                raw = response.read().decode("utf-8").strip().splitlines()
+            if len(raw) > 1:
+                rows = raw[1:]
+                limit = 252 if safe_range == "1y" else 90 if safe_range == "3mo" else 30
+                rows = rows[-limit:]
+                parsed_rows = []
+                for idx, row in enumerate(rows):
+                    parts = row.split(",")
+                    if len(parts) < 6:
+                        continue
+                    # Date,Open,High,Low,Close,Volume
+                    o = float(parts[1])
+                    h = float(parts[2])
+                    l = float(parts[3])
+                    c = float(parts[4])
+                    v = float(parts[5])
+                    ts = idx + 1
+                    parsed_rows.append((ts, o, h, l, c, v))
+                if parsed_rows:
+                    timestamps = [row[0] for row in parsed_rows]
+                    opens = [row[1] for row in parsed_rows]
+                    highs = [row[2] for row in parsed_rows]
+                    lows = [row[3] for row in parsed_rows]
+                    closes = [row[4] for row in parsed_rows]
+                    volumes = [row[5] for row in parsed_rows]
+        except Exception:
+            pass
+
+    candles = []
+    close_values: List[float] = []
+    for idx, ts in enumerate(timestamps):
+        try:
+            o = float(opens[idx])
+            h = float(highs[idx])
+            l = float(lows[idx])
+            c = float(closes[idx])
+            v = float(volumes[idx] or 0)
+        except Exception:
+            continue
+        close_values.append(c)
+        candles.append(
+            {
+                "t": int(ts),
+                "o": o,
+                "h": h,
+                "l": l,
+                "c": c,
+                "v": v,
+            }
+        )
+
+    sma20 = _calc_sma(close_values, 20)
+    ema20 = _calc_ema(close_values, 20)
+    rsi14 = _calc_rsi(close_values, 14)
+
+    return {
+        "symbol": symbol.upper(),
+        "range": safe_range,
+        "interval": safe_interval,
+        "candles": candles,
+        "indicators": {
+            "sma20": sma20,
+            "ema20": ema20,
+            "rsi14": rsi14,
+        },
+    }
 
 
 def _hydrate_model_list(key: str, model_cls: Any, default_items: List[Any]) -> List[Any]:
@@ -164,6 +409,33 @@ def _hydrate_all_state() -> None:
     SETTINGS_DATA = _hydrate_primitive_list(STATE_KEYS["settings_data"], SETTINGS_DATA)
 
 
+def _remove_legacy_seeded_mock_data() -> None:
+    global POSTS, PRODUCTS_REVIEW
+
+    # Remove old hardcoded demo posts if they were previously persisted in state DB.
+    if POSTS and len(POSTS) <= 3:
+        looks_legacy_posts = all(
+            p.user_id in {1, 2, 3}
+            and "via.placeholder.com" in str(p.avatar)
+            and ("via.placeholder.com" in str(p.image) or p.image is None)
+            for p in POSTS
+        )
+        if looks_legacy_posts:
+            POSTS = []
+            _persist_state(STATE_KEYS["posts"], POSTS)
+
+    # Remove old seeded product reviews tied to the previous demo catalog.
+    if PRODUCTS_REVIEW and len(PRODUCTS_REVIEW) <= 3:
+        legacy_usernames = {"john_doe", "jane_smith", "mike_tech"}
+        looks_legacy_reviews = all(
+            r.username in legacy_usernames and r.product_id in {1, 2}
+            for r in PRODUCTS_REVIEW
+        )
+        if looks_legacy_reviews:
+            PRODUCTS_REVIEW = []
+            _persist_state(STATE_KEYS["products_review"], PRODUCTS_REVIEW)
+
+
 def _require_user_access(user_id: int, current_user: Dict[str, Any]) -> None:
     if int(current_user["id"]) != int(user_id):
         raise HTTPException(status_code=403, detail="Forbidden: user scope mismatch.")
@@ -174,6 +446,7 @@ async def setup_auth_database() -> None:
     init_auth_db()
     init_state_db()
     _hydrate_all_state()
+    _remove_legacy_seeded_mock_data()
 
 
 app.include_router(auth_router)
@@ -359,38 +632,65 @@ class Trade(BaseModel):
     total_amount: float
     timestamp: str
     asset_type: str  # "stock" or "forex"
+
+
+class CheckoutRequest(BaseModel):
+    address: str
+
+
+class AmountRequest(BaseModel):
+    amount: float
+
+
+class LoyaltyPointsRequest(BaseModel):
+    points: int
+
+
+class ChatSendRequest(BaseModel):
+    message: str
+
+
+class SettingsUpdateRequest(BaseModel):
+    dark_mode: Optional[bool] = None
+    language: Optional[str] = None
+    notifications_enabled: Optional[bool] = None
+
+
+class SendMessageRequest(BaseModel):
+    receiver_id: int
+    content: str
+
+
+class PostCommentRequest(BaseModel):
+    content: str
+
+
+class StoryCreateRequest(BaseModel):
+    image: str
+
+
+class CreatePostRequest(BaseModel):
+    content: str
+    image: Optional[str] = None
+
 USERS = {
-    1: User(id=1, username="john_doe", name="John Doe", avatar="https://via.placeholder.com/50", bio="Travel enthusiast 🌍", followers=1250, following=340),
+    1: User(id=1, username="john_doe", name="John Doe", avatar="https://via.placeholder.com/50", bio="Travel enthusiast ðŸŒ", followers=1250, following=340),
     2: User(id=2, username="jane_smith", name="Jane Smith", avatar="https://via.placeholder.com/50", bio="Designer & Photographer", followers=2105, following=450),
     3: User(id=3, username="mike_tech", name="Mike Tech", avatar="https://via.placeholder.com/50", bio="Tech enthusiast", followers=890, following=210),
 }
 
 SELLERS = [
-    Seller(id=1, user_id=2, shop_name="Jane's Electronics", shop_avatar="https://via.placeholder.com/50", rating=4.8, reviews_count=1250, followers=5600, bio="Premium electronics & gadgets 📱"),
+    Seller(id=1, user_id=2, shop_name="Jane's Electronics", shop_avatar="https://via.placeholder.com/50", rating=4.8, reviews_count=1250, followers=5600, bio="Premium electronics & gadgets ðŸ“±"),
     Seller(id=2, user_id=3, shop_name="Tech Hub", shop_avatar="https://via.placeholder.com/50", rating=4.5, reviews_count=890, followers=3400, bio="Affordable tech products"),
     Seller(id=3, user_id=1, shop_name="Global Deals", shop_avatar="https://via.placeholder.com/50", rating=4.7, reviews_count=2100, followers=7200, bio="Best deals from around the world"),
 ]
 
-PRODUCTS = [
-    Product(id=1, seller_id=1, seller_name="Jane's Electronics", seller_avatar="https://via.placeholder.com/50", name="Wireless Earbuds Pro", description="Premium noise-cancelling wireless earbuds with 48-hour battery life", price=45.99, original_price=79.99, image="https://via.placeholder.com/300", images=[], category="Electronics", rating=4.8, reviews=542, sold=1230, stock=45, shipping_cost=0, estimated_delivery="2-3 days"),
-    Product(id=2, seller_id=2, seller_name="Tech Hub", seller_avatar="https://via.placeholder.com/50", name="Smartphone Stand", description="Adjustable phone stand for desk", price=12.50, original_price=19.99, image="https://via.placeholder.com/300", images=[], category="Accessories", rating=4.6, reviews=234, sold=890, stock=120, shipping_cost=2.99, estimated_delivery="3-5 days"),
-    Product(id=3, seller_id=3, seller_name="Global Deals", seller_avatar="https://via.placeholder.com/50", name="USB-C Cable 2-Pack", description="Durable fast charging USB-C cables", price=8.99, original_price=15.99, image="https://via.placeholder.com/300", images=[], category="Cables", rating=4.7, reviews=1050, sold=5600, stock=200, shipping_cost=0, estimated_delivery="1-2 days"),
-    Product(id=4, seller_id=1, seller_name="Jane's Electronics", seller_avatar="https://via.placeholder.com/50", name="Smart Watch X1", description="Fitness tracking, notifications, 7-day battery", price=129.99, original_price=199.99, image="https://via.placeholder.com/300", images=[], category="Wearables", rating=4.9, reviews=876, sold=3450, stock=67, shipping_cost=0, estimated_delivery="2-3 days"),
-    Product(id=5, seller_id=2, seller_name="Tech Hub", seller_avatar="https://via.placeholder.com/50", name="Portable Speaker", description="40W waterproof Bluetooth speaker", price=34.99, original_price=59.99, image="https://via.placeholder.com/300", images=[], category="Audio", rating=4.5, reviews=423, sold=2150, stock=89, shipping_cost=3.99, estimated_delivery="3-5 days"),
-    Product(id=6, seller_id=3, seller_name="Global Deals", seller_avatar="https://via.placeholder.com/50", name="Screen Protector Pack", description="Tempered glass screen protectors - 3 pack", price=6.99, original_price=12.99, image="https://via.placeholder.com/300", images=[], category="Protection", rating=4.4, reviews=612, sold=4200, stock=500, shipping_cost=0, estimated_delivery="1-2 days"),
-]
+PRODUCTS = []
 
-PRODUCTS_REVIEW = [
-    Review(id=1, product_id=1, user_id=1, username="john_doe", rating=5, text="Amazing quality! Works perfectly, great battery life.", timestamp="2 days ago", helpful=234),
-    Review(id=2, product_id=1, user_id=2, username="jane_smith", rating=4.5, text="Good sound quality, ANC could be better", timestamp="1 week ago", helpful=145),
-    Review(id=3, product_id=2, user_id=3, username="mike_tech", rating=4, text="Sturdy and adjustable, good value", timestamp="2 weeks ago", helpful=89),
-]
+PRODUCTS_REVIEW = []
 
-POSTS = [
-    Post(id=1, user_id=1, username="john_doe", avatar="https://via.placeholder.com/50", content="Just landed in Paris! 🗼", image="https://via.placeholder.com/300", likes=234, comments=12, timestamp="2 hours ago"),
-    Post(id=2, user_id=2, username="jane_smith", avatar="https://via.placeholder.com/50", content="New design project coming soon!", image="https://via.placeholder.com/300", likes=567, comments=34, timestamp="4 hours ago"),
-    Post(id=3, user_id=3, username="mike_tech", avatar="https://via.placeholder.com/50", content="Check out this new gadget review", image=None, likes=123, comments=8, timestamp="6 hours ago"),
-]
+POSTS = []
+
 
 MESSAGES = [
     Message(id=1, sender_id=1, receiver_id=2, sender_name="John Doe", content="Hey! How are you?", timestamp="10:30 AM", read=True),
@@ -490,9 +790,27 @@ async def get_feed():
     return POSTS
 
 @app.post("/posts")
-async def create_post(post: Post):
-    new_id = max([p.id for p in POSTS]) + 1
-    POSTS.append(Post(id=new_id, **post.dict()))
+async def create_post(
+    payload: CreatePostRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    new_id = max((p.id for p in POSTS), default=0) + 1
+    username = str(current_user.get("username") or f"user_{current_user['id']}")
+    full_name = str(current_user.get("full_name") or username)
+    avatar = f"https://ui-avatars.com/api/?name={urllib.parse.quote(full_name)}&background=2563eb&color=ffffff"
+    POSTS.append(
+        Post(
+            id=new_id,
+            user_id=int(current_user["id"]),
+            username=username,
+            avatar=avatar,
+            content=payload.content.strip(),
+            image=payload.image,
+            likes=0,
+            comments=0,
+            timestamp="Just now",
+        )
+    )
     _persist_state(STATE_KEYS["posts"], POSTS)
     return {"success": True, "post_id": new_id}
 
@@ -506,9 +824,15 @@ async def like_post(post_id: int):
     return {"error": "Post not found"}
 
 @app.post("/posts/{post_id}/comment")
-async def comment_on_post(post_id: int, comment: Comment):
+async def comment_on_post(
+    post_id: int,
+    payload: PostCommentRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
     for post in POSTS:
         if post.id == post_id:
+            if not payload.content.strip():
+                return {"error": "Comment content required"}
             post.comments += 1
             _persist_state(STATE_KEYS["posts"], POSTS)
             return {"success": True, "comment_id": 1, "comments_count": post.comments}
@@ -516,25 +840,46 @@ async def comment_on_post(post_id: int, comment: Comment):
 
 # Messaging endpoints
 @app.get("/messages", response_model=List[Message])
-async def get_messages():
-    return MESSAGES
+async def get_messages(current_user: Dict[str, Any] = Depends(get_current_user)):
+    user_id = int(current_user["id"])
+    return [m for m in MESSAGES if m.sender_id == user_id or m.receiver_id == user_id]
 
 @app.get("/messages/{user_id}", response_model=List[Message])
-async def get_conversation(user_id: int):
+async def get_conversation(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    _require_user_access(user_id, current_user)
     return [m for m in MESSAGES if m.sender_id == user_id or m.receiver_id == user_id]
 
 @app.post("/messages")
-async def send_message(message: Message):
+async def send_message(
+    payload: SendMessageRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
     new_id = max([m.id for m in MESSAGES]) + 1
-    MESSAGES.append(Message(id=new_id, **message.dict()))
+    sender_id = int(current_user["id"])
+    sender_name = str(current_user.get("full_name") or current_user.get("username") or "User")
+    stamp = datetime.now().strftime("%H:%M")
+    MESSAGES.append(
+        Message(
+            id=new_id,
+            sender_id=sender_id,
+            receiver_id=payload.receiver_id,
+            sender_name=sender_name,
+            content=payload.content,
+            timestamp=stamp,
+            read=False,
+        )
+    )
     _persist_state(STATE_KEYS["messages"], MESSAGES)
     return {"success": True, "message_id": new_id}
 
 @app.get("/conversations")
-async def get_conversations():
+async def get_conversations(current_user: Dict[str, Any] = Depends(get_current_user)):
+    current_user_id = int(current_user["id"])
     conversations = {}
     for msg in MESSAGES:
-        other_user_id = msg.receiver_id if msg.sender_id == 1 else msg.sender_id
+        if msg.sender_id != current_user_id and msg.receiver_id != current_user_id:
+            continue
+        other_user_id = msg.receiver_id if msg.sender_id == current_user_id else msg.sender_id
         if other_user_id not in conversations:
             conversations[other_user_id] = {
                 "user_id": other_user_id,
@@ -551,9 +896,24 @@ async def get_stories():
     return STORIES
 
 @app.post("/stories")
-async def upload_story(story: Story):
+async def upload_story(
+    payload: StoryCreateRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
     new_id = max([s.id for s in STORIES]) + 1
-    STORIES.append(Story(id=new_id, **story.dict()))
+    user_id = int(current_user["id"])
+    username = str(current_user.get("username") or f"user_{user_id}")
+    avatar = f"https://ui-avatars.com/api/?name={urllib.parse.quote(str(current_user.get('full_name') or username))}&background=2563eb&color=ffffff"
+    STORIES.append(
+        Story(
+            id=new_id,
+            user_id=user_id,
+            username=username,
+            avatar=avatar,
+            image=payload.image,
+            expires_in=24,
+        )
+    )
     _persist_state(STATE_KEYS["stories"], STORIES)
     return {"success": True, "story_id": new_id}
 
@@ -619,7 +979,7 @@ async def get_product_reviews(product_id: int):
 
 @app.post("/products/{product_id}/review")
 async def add_review(product_id: int, review: Review):
-    new_id = max([r.id for r in PRODUCTS_REVIEW]) + 1
+    new_id = max((r.id for r in PRODUCTS_REVIEW), default=0) + 1
     PRODUCTS_REVIEW.append(Review(id=new_id, **review.dict()))
     _persist_state(STATE_KEYS["products_review"], PRODUCTS_REVIEW)
     return {"success": True, "review_id": new_id}
@@ -674,7 +1034,11 @@ async def clear_cart(user_id: int, current_user: Dict[str, Any] = Depends(get_cu
 
 # Order endpoints
 @app.post("/checkout/{user_id}")
-async def checkout(user_id: int, address: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+async def checkout(
+    user_id: int,
+    payload: CheckoutRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
     _require_user_access(user_id, current_user)
     if user_id not in CART or not CART[user_id]:
         return {"error": "Cart is empty"}
@@ -686,7 +1050,7 @@ async def checkout(user_id: int, address: str, current_user: Dict[str, Any] = De
         user_id=user_id,
         items=CART[user_id],
         total_price=total,
-        shipping_address=address,
+        shipping_address=payload.address,
         status=OrderStatus.PENDING,
         created_at="Now",
         estimated_delivery="3-5 business days"
@@ -730,30 +1094,42 @@ async def get_categories():
 # Stock endpoints
 @app.get("/stocks", response_model=List[Stock])
 async def get_stocks():
+    live = _fetch_live_stocks()
+    if live:
+        return live
     return STOCKS
 
 @app.get("/stocks/{stock_id}", response_model=Stock)
 async def get_stock(stock_id: int):
-    for stock in STOCKS:
+    stocks = _fetch_live_stocks() or STOCKS
+    for stock in stocks:
         if stock.id == stock_id:
             return stock
     return {"error": "Stock not found"}
 
 @app.get("/stocks/symbol/{symbol}", response_model=Stock)
 async def get_stock_by_symbol(symbol: str):
-    for stock in STOCKS:
+    stocks = _fetch_live_stocks() or STOCKS
+    for stock in stocks:
         if stock.symbol.upper() == symbol.upper():
             return stock
     return {"error": "Stock not found"}
 
+
+@app.get("/stocks/symbol/{symbol}/chart")
+async def get_stock_chart(symbol: str, range: str = "1mo", interval: str = "1d"):
+    return _fetch_stock_chart(symbol, range, interval)
+
 @app.get("/market/top-gainers")
 async def get_top_gainers():
-    sorted_stocks = sorted(STOCKS, key=lambda x: x.change, reverse=True)[:5]
+    stocks = _fetch_live_stocks() or STOCKS
+    sorted_stocks = sorted(stocks, key=lambda x: x.change, reverse=True)[:5]
     return sorted_stocks
 
 @app.get("/market/top-losers")
 async def get_top_losers():
-    sorted_stocks = sorted(STOCKS, key=lambda x: x.change)[:5]
+    stocks = _fetch_live_stocks() or STOCKS
+    sorted_stocks = sorted(stocks, key=lambda x: x.change)[:5]
     return sorted_stocks
 
 # Forex endpoints
@@ -979,6 +1355,7 @@ class Settings(BaseModel):
     notifications_enabled: bool
     created_at: str
 
+
 # Mock Data
 NOTIFICATIONS = [
     {"id": 1, "user_id": 1, "title": "Order Confirmed", "message": "Your order #101 has been confirmed", "type": "order", "read": False, "created_at": "2026-02-22T09:00:00"},
@@ -1141,10 +1518,11 @@ async def get_wallet(user_id: int, current_user: Dict[str, Any] = Depends(get_cu
 @app.post("/wallet/{user_id}/deposit")
 async def deposit_to_wallet(
     user_id: int,
-    amount: float,
+    payload: AmountRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     _require_user_access(user_id, current_user)
+    amount = payload.amount
     for wallet in WALLETS:
         if wallet["user_id"] == user_id:
             wallet["balance"] += amount
@@ -1156,10 +1534,11 @@ async def deposit_to_wallet(
 @app.post("/wallet/{user_id}/withdraw")
 async def withdraw_from_wallet(
     user_id: int,
-    amount: float,
+    payload: AmountRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     _require_user_access(user_id, current_user)
+    amount = payload.amount
     for wallet in WALLETS:
         if wallet["user_id"] == user_id:
             if wallet["balance"] >= amount:
@@ -1184,12 +1563,19 @@ async def get_chat(
 async def send_chat_message(
     user_id: int,
     seller_id: int,
-    message: str,
+    payload: ChatSendRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     _require_user_access(user_id, current_user)
     new_id = max([m["id"] for m in CHAT_MESSAGES]) + 1 if CHAT_MESSAGES else 1
-    msg = {"id": new_id, "user_id": user_id, "seller_id": seller_id, "message": message, "timestamp": "2026-02-22T10:00:00", "read": False}
+    msg = {
+        "id": new_id,
+        "user_id": user_id,
+        "seller_id": seller_id,
+        "message": payload.message,
+        "timestamp": "2026-02-22T10:00:00",
+        "read": False,
+    }
     CHAT_MESSAGES.append(msg)
     _persist_state(STATE_KEYS["chat_messages"], CHAT_MESSAGES)
     return {"success": True, "message_id": new_id}
@@ -1318,10 +1704,11 @@ async def get_loyalty_points(user_id: int, current_user: Dict[str, Any] = Depend
 @app.post("/loyalty/{user_id}/add-points")
 async def add_loyalty_points(
     user_id: int,
-    points: int,
+    payload: LoyaltyPointsRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     _require_user_access(user_id, current_user)
+    points = payload.points
     for lp in LOYALTY_POINTS:
         if lp["user_id"] == user_id:
             lp["points"] += points
@@ -1358,20 +1745,18 @@ async def get_settings(user_id: int, current_user: Dict[str, Any] = Depends(get_
 @app.post("/settings/{user_id}/update")
 async def update_settings(
     user_id: int,
-    dark_mode: bool = None,
-    language: str = None,
-    notifications_enabled: bool = None,
+    payload: SettingsUpdateRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     _require_user_access(user_id, current_user)
     for setting in SETTINGS_DATA:
         if setting["user_id"] == user_id:
-            if dark_mode is not None:
-                setting["dark_mode"] = dark_mode
-            if language is not None:
-                setting["language"] = language
-            if notifications_enabled is not None:
-                setting["notifications_enabled"] = notifications_enabled
+            if payload.dark_mode is not None:
+                setting["dark_mode"] = payload.dark_mode
+            if payload.language is not None:
+                setting["language"] = payload.language
+            if payload.notifications_enabled is not None:
+                setting["notifications_enabled"] = payload.notifications_enabled
             _persist_state(STATE_KEYS["settings_data"], SETTINGS_DATA)
             return {"success": True, "settings": setting}
     return {"error": "Settings not found"}
@@ -1419,3 +1804,5 @@ async def root():
         "version": "3.0.0",
         "features": ["Social Media", "E-Commerce", "Messaging", "Stories", "Products", "Orders", "Stocks", "Forex", "Trading"]
     }
+
+

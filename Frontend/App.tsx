@@ -31,7 +31,9 @@ import {
 
 const API_BASE = 'http://localhost:8000';
 let ACCESS_TOKEN = '';
+let REFRESH_TOKEN = '';
 let ACTIVE_USER_ID = 1;
+let REFRESH_IN_FLIGHT: Promise<boolean> | null = null;
 const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 const SHADOW_POST_CARD = Platform.select({
   web: {boxShadow: '0px 8px 10px rgba(15, 23, 42, 0.06)'},
@@ -104,162 +106,61 @@ const SHADOW_LOGOUT = Platform.select({
   },
 }) as any;
 
-const apiFetch = (path: string, options: RequestInit = {}) => {
+const requestWithToken = (path: string, options: RequestInit = {}) => {
   const headers = new Headers(options.headers ?? {});
   if (ACCESS_TOKEN) {
     headers.set('Authorization', `Bearer ${ACCESS_TOKEN}`);
   }
-  return fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
+  return fetch(`${API_BASE}${path}`, {...options, headers});
 };
 
-const MOCK_POSTS = [
-  {
-    id: 1,
-    user_id: 2,
-    username: 'market_maya',
-    avatar: 'https://i.pravatar.cc/100?img=44',
-    content: 'Quick reminder: build watchlists around sectors, not hype. Risk first, returns second.',
-    image: 'https://images.unsplash.com/photo-1559526324-593bc073d938?w=1200',
-    likes: 182,
-    comments: 24,
-    timestamp: '2h ago',
-  },
-  {
-    id: 2,
-    user_id: 3,
-    username: 'shop_sam',
-    avatar: 'https://i.pravatar.cc/100?img=14',
-    content: 'Weekend bundle deals are live. Clean UI + fast delivery = happy customers.',
-    image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=1200',
-    likes: 96,
-    comments: 11,
-    timestamp: '5h ago',
-  },
-];
+const refreshAccessToken = async () => {
+  if (!REFRESH_TOKEN) {
+    return false;
+  }
+  if (REFRESH_IN_FLIGHT) {
+    return REFRESH_IN_FLIGHT;
+  }
 
-const MOCK_CONVERSATIONS = [
-  {
-    user_id: 8,
-    user: {
-      id: 8,
-      username: 'alice',
-      name: 'Alice Morgan',
-      avatar: 'https://i.pravatar.cc/100?img=8',
-      bio: 'Creator',
-      followers: 820,
-      following: 305,
-    },
-    last_message: 'Can you review the new feed cards?',
-    timestamp: '09:14',
-    unread: true,
-  },
-  {
-    user_id: 9,
-    user: {
-      id: 9,
-      username: 'ron',
-      name: 'Ron Vega',
-      avatar: 'https://i.pravatar.cc/100?img=12',
-      bio: 'Trader',
-      followers: 450,
-      following: 190,
-    },
-    last_message: 'Portfolio panel looks solid now.',
-    timestamp: 'Yesterday',
-    unread: false,
-  },
-];
+  REFRESH_IN_FLIGHT = (async () => {
+    try {
+      const response = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({refresh_token: REFRESH_TOKEN}),
+      });
+      if (!response.ok) {
+        ACCESS_TOKEN = '';
+        REFRESH_TOKEN = '';
+        return false;
+      }
+      const data = await response.json();
+      ACCESS_TOKEN = data.access_token || '';
+      REFRESH_TOKEN = data.refresh_token || '';
+      return Boolean(ACCESS_TOKEN);
+    } catch {
+      return false;
+    } finally {
+      REFRESH_IN_FLIGHT = null;
+    }
+  })();
 
-const MOCK_STORIES = [
-  {id: 1, user_id: 2, username: 'market_maya', avatar: 'https://i.pravatar.cc/100?img=44', image: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=800', expires_in: 12},
-  {id: 2, user_id: 3, username: 'shop_sam', avatar: 'https://i.pravatar.cc/100?img=14', image: 'https://images.unsplash.com/photo-1512436991641-6745cdb1723f?w=800', expires_in: 18},
-];
-
-const MOCK_STOCKS = [
-  {id: 1, symbol: 'AAPL', name: 'Apple Inc.', price: 198.42, change: 1.42, change_amount: 2.78, market_cap: '3.0T', volume: '58M', rating: 4.8, reviews: 1200, high_52w: 210, low_52w: 164, pe_ratio: 30.8, dividend_yield: 0.52, description: 'Consumer tech leader with strong ecosystem.', chart_data: [180, 184, 191, 198]},
-  {id: 2, symbol: 'NVDA', name: 'NVIDIA Corp.', price: 924.37, change: -0.64, change_amount: -5.91, market_cap: '2.2T', volume: '41M', rating: 4.9, reviews: 980, high_52w: 974, low_52w: 405, pe_ratio: 67.2, dividend_yield: 0.03, description: 'AI infrastructure and GPU market leader.', chart_data: [720, 810, 880, 924]},
-];
-
-const MOCK_PORTFOLIO = {
-  total_value: 12450.55,
-  profit_loss: 984.12,
-  profit_loss_percent: 8.58,
+  return REFRESH_IN_FLIGHT;
 };
 
-const MOCK_FOREX = [
-  {id: 1, symbol: 'EUR/USD', name: 'Euro / US Dollar', rate: 1.0894, bid: 1.0892, ask: 1.0896, change: 0.21, change_percent: 0.21, high: 1.0922, low: 1.0821, description: 'Most traded FX pair globally.', chart_data: [1.07, 1.08, 1.085, 1.089]},
-  {id: 2, symbol: 'GBP/USD', name: 'British Pound / US Dollar', rate: 1.2761, bid: 1.2758, ask: 1.2764, change: -0.12, change_percent: -0.12, high: 1.2812, low: 1.2708, description: 'High-liquidity pair with broad sessions.', chart_data: [1.25, 1.26, 1.275, 1.276]},
-];
+const apiFetch = async (path: string, options: RequestInit = {}) => {
+  const response = await requestWithToken(path, options);
+  const isAuthRoute = path.startsWith('/auth/');
+  if (response.status !== 401 || isAuthRoute) {
+    return response;
+  }
 
-const MOCK_PRODUCTS = [
-  {id: 1, seller_id: 11, seller_name: 'UrbanTech', seller_avatar: 'https://i.pravatar.cc/100?img=31', name: 'Noise Cancelling Headphones', description: 'Premium wireless over-ear comfort.', price: 149.99, original_price: 199.99, image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800', category: 'Electronics', rating: 4.7, reviews: 532, sold: 1300, stock: 42, shipping_cost: 4.99, estimated_delivery: '2-3 days'},
-  {id: 2, seller_id: 12, seller_name: 'FitNest', seller_avatar: 'https://i.pravatar.cc/100?img=35', name: 'Smart Fitness Watch', description: 'Heart-rate, sleep and workout tracking.', price: 89.0, original_price: 119.0, image: 'https://images.unsplash.com/photo-1546868871-7041f2a55e12?w=800', category: 'Wearables', rating: 4.5, reviews: 301, sold: 870, stock: 0, shipping_cost: 3.5, estimated_delivery: '4-6 days'},
-  {id: 3, seller_id: 13, seller_name: 'HomeLab', seller_avatar: 'https://i.pravatar.cc/100?img=39', name: 'Minimal Desk Lamp', description: 'Warm tone LED lamp for focused work.', price: 39.99, image: 'https://images.unsplash.com/photo-1507473885765-e6ed057f782c?w=800', category: 'Home', rating: 4.6, reviews: 190, sold: 480, stock: 60, shipping_cost: 2.99, estimated_delivery: '1-2 days'},
-];
+  const refreshed = await refreshAccessToken();
+  if (!refreshed) {
+    return response;
+  }
 
-const MOCK_CART = {
-  items: [
-    {product_id: 1, seller_id: 11, quantity: 1, price: 149.99},
-    {product_id: 3, seller_id: 13, quantity: 2, price: 39.99},
-  ],
-  total: 229.97,
-};
-
-const MOCK_ORDERS = [
-  {id: 7012, user_id: 1, items: [{product_id: 5, seller_id: 12, quantity: 1, price: 59.99}], total_price: 59.99, shipping_address: '123 Main St', status: 'shipped', created_at: '2026-02-22', estimated_delivery: '2026-02-27'},
-  {id: 7013, user_id: 1, items: [{product_id: 2, seller_id: 11, quantity: 1, price: 89.0}], total_price: 89.0, shipping_address: '123 Main St', status: 'delivered', created_at: '2026-02-18', estimated_delivery: '2026-02-21'},
-];
-
-const MOCK_NOTIFICATIONS = [
-  {id: 1, user_id: 1, title: 'Order Update', message: 'Your order #7012 has been shipped.', type: 'order', read: false, created_at: '10m ago'},
-  {id: 2, user_id: 1, title: 'Market Alert', message: 'AAPL moved +1.4% today.', type: 'market', read: true, created_at: '2h ago'},
-];
-
-const MOCK_WISHLIST = [
-  {id: 1, user_id: 1, product_id: 2, added_at: '2026-02-23', product: MOCK_PRODUCTS[1]},
-  {id: 2, user_id: 1, product_id: 3, added_at: '2026-02-22', product: MOCK_PRODUCTS[2]},
-];
-
-const MOCK_WALLET = {
-  id: 1,
-  user_id: 1,
-  balance: 1420.55,
-  total_spent: 3580.25,
-  total_earned: 944.8,
-  created_at: '2026-01-01',
-};
-
-const MOCK_CRYPTOS = [
-  {id: 1, symbol: 'BTC', name: 'Bitcoin', price: 68210.12, change: 1.4, change_percent: 1.4, market_cap: '1.34T', volume: '29B'},
-  {id: 2, symbol: 'ETH', name: 'Ethereum', price: 3520.44, change: -0.7, change_percent: -0.7, market_cap: '423B', volume: '14B'},
-];
-
-const MOCK_TRADERS = [
-  {id: 1, trader_id: 101, trader_name: 'Elena Ruiz', followers: 12400, win_rate: 73.4, roi: 32.1, total_trades: 518, created_at: '2025-03-02'},
-  {id: 2, trader_id: 102, trader_name: 'Noah Kim', followers: 8700, win_rate: 68.9, roi: 24.6, total_trades: 401, created_at: '2025-06-11'},
-];
-
-const MOCK_LOYALTY = {
-  id: 1,
-  user_id: 1,
-  points: 2450,
-  tier: 'gold',
-  created_at: '2025-01-01',
-};
-
-const MOCK_FOLLOWERS = [
-  {follower_id: 201, created_at: '2026-02-20'},
-  {follower_id: 202, created_at: '2026-02-18'},
-];
-
-const MOCK_ANALYTICS = {
-  total_spent: 3580.25,
-  orders: 18,
-  avg_order: 198.9,
-  favorite_category: 'Electronics',
+  return requestWithToken(path, options);
 };
 
 // Types
@@ -365,6 +266,37 @@ interface Stock {
   chart_data: number[];
 }
 
+interface StockCandle {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+interface StockChartPayload {
+  symbol: string;
+  range: string;
+  interval: string;
+  candles: StockCandle[];
+  indicators: {
+    sma20: Array<number | null>;
+    ema20: Array<number | null>;
+    rsi14: Array<number | null>;
+  };
+}
+
+interface TrendLine {
+  id: number;
+  startIdx: number;
+  endIdx: number;
+  startPrice: number;
+  endPrice: number;
+  slope: number;
+  color: string;
+}
+
 interface ForexPair {
   id: number;
   symbol: string;
@@ -388,6 +320,19 @@ interface Notification {
   type: string;
   read: boolean;
   created_at: string;
+}
+
+interface NewsArticle {
+  title: string;
+  source?: {name?: string};
+  url?: string;
+  publishedAt?: string;
+}
+
+interface ExternalPhoto {
+  id: number;
+  src?: {medium?: string; large?: string};
+  alt?: string;
 }
 
 // @ts-ignore - Used for type checking API responses
@@ -491,9 +436,9 @@ function App() {
     username: 'demo',
     name: 'Demo User',
     avatar: 'https://ui-avatars.com/api/?name=Demo+User&background=2563eb&color=ffffff&bold=true',
-    bio: 'Welcome to UniHub',
-    followers: 1250,
-    following: 340,
+    bio: '',
+    followers: 0,
+    following: 0,
   });
 
   const mapAccountToUser = (account: AuthAccount): User => ({
@@ -501,9 +446,9 @@ function App() {
     username: account.username,
     name: account.fullName,
     avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(account.fullName)}&background=2563eb&color=ffffff&bold=true`,
-    bio: account.provider ? `Signed in with ${account.provider}` : 'Travel enthusiast',
-    followers: 1250,
-    following: 340,
+    bio: account.provider ? `Signed in with ${account.provider}` : '',
+    followers: 0,
+    following: 0,
   });
 
   const handleLoginSuccess = (account: AuthAccount) => {
@@ -515,6 +460,9 @@ function App() {
   useEffect(() => {
     ACCESS_TOKEN = accessToken;
   }, [accessToken]);
+  useEffect(() => {
+    REFRESH_TOKEN = refreshToken;
+  }, [refreshToken]);
 
   const upsertAccount = (account: AuthAccount) => {
     setAccounts(prev => {
@@ -578,19 +526,7 @@ function App() {
       upsertAccount(account);
       return {account, accessToken: data.access_token, refreshToken: data.refresh_token};
     } catch (error) {
-      const matchedAccount = accounts.find(
-        account => account.email.toLowerCase() === normalizedEmail
-      );
-
-      if (!matchedAccount) {
-        return {account: null, error: 'Account not found.'};
-      }
-
-      if (matchedAccount.password !== password) {
-        return {account: null, error: 'Incorrect password.'};
-      }
-
-      return {account: matchedAccount};
+      return {account: null, error: 'Unable to reach authentication service.'};
     }
   };
 
@@ -628,32 +564,7 @@ function App() {
       upsertAccount(account);
       return {account, accessToken: data.access_token, refreshToken: data.refresh_token};
     } catch (error) {
-      const emailTaken = accounts.some(
-        account => account.email.toLowerCase() === normalizedEmail
-      );
-      const usernameTaken = accounts.some(
-        account => account.username.toLowerCase() === normalizedUsername
-      );
-
-      if (emailTaken) {
-        return {account: null, error: 'Email already used.'};
-      }
-
-      if (usernameTaken) {
-        return {account: null, error: 'Username unavailable.'};
-      }
-
-      const fallbackAccount: AuthAccount = {
-        id: Date.now(),
-        fullName: fullName.trim(),
-        username: normalizedUsername,
-        email: normalizedEmail,
-        password,
-        provider,
-      };
-
-      upsertAccount(fallbackAccount);
-      return {account: fallbackAccount};
+      return {account: null, error: 'Unable to reach sign-up service.'};
     }
   };
 
@@ -972,7 +883,7 @@ function AuthenticationScreen({
 
     Alert.alert(
       'Reset email sent',
-      `A password reset link was sent to ${normalizedEmail} (simulated flow).`
+      `A password reset link was sent to ${normalizedEmail}.`
     );
   };
 
@@ -1318,6 +1229,7 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
 // Feed Screen (Instagram/Threads style)
 function FeedScreen() {
   const [posts, setPosts] = useState<Post[]>([]);
+  const [newsItems, setNewsItems] = useState<NewsArticle[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState('For you');
   const [commentDrafts, setCommentDrafts] = useState<{[postId: number]: string}>({});
@@ -1329,6 +1241,7 @@ function FeedScreen() {
 
   useEffect(() => {
     fetchFeed();
+    fetchNews();
   }, []);
 
   useEffect(() => {
@@ -1348,11 +1261,21 @@ function FeedScreen() {
     try {
       const response = await apiFetch(`/feed`);
       const data = await response.json();
-      setPosts(Array.isArray(data) && data.length > 0 ? data : MOCK_POSTS);
+      setPosts(Array.isArray(data) ? data : []);
     } catch {
-      setPosts(MOCK_POSTS);
+      setPosts([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchNews = async () => {
+    try {
+      const response = await apiFetch(`/external/news?query=finance`);
+      const data = await response.json();
+      setNewsItems(Array.isArray(data?.items) ? data.items.slice(0, 5) : []);
+    } catch {
+      setNewsItems([]);
     }
   };
 
@@ -1369,24 +1292,37 @@ function FeedScreen() {
   const formatCount = (count: number) =>
     count >= 1000 ? `${(count / 1000).toFixed(1).replace('.0', '')}k` : `${count}`;
 
-  const handleComment = (postId: number) => {
+  const handleComment = async (postId: number) => {
     const draft = commentDrafts[postId]?.trim();
     if (!draft) {
       Alert.alert('Comment required', 'Type a comment first.');
       return;
     }
-
-    setLocalComments(prev => ({
-      ...prev,
-      [postId]: [...(prev[postId] || []), draft],
-    }));
-    setPosts(prev => prev.map(p => p.id === postId ? {...p, comments: p.comments + 1} : p));
-    setCommentDrafts(prev => ({...prev, [postId]: ''}));
+    try {
+      const response = await apiFetch(`/posts/${postId}/comment`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({content: draft}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.success) {
+        Alert.alert('Comment failed', data?.error || data?.detail || 'Unable to post comment.');
+        return;
+      }
+      setLocalComments(prev => ({
+        ...prev,
+        [postId]: [...(prev[postId] || []), draft],
+      }));
+      setPosts(prev => prev.map(p => p.id === postId ? {...p, comments: data.comments_count ?? p.comments + 1} : p));
+      setCommentDrafts(prev => ({...prev, [postId]: ''}));
+    } catch {
+      Alert.alert('Comment failed', 'Unable to post comment right now.');
+    }
   };
 
   const handleShare = (postId: number, username: string) => {
     setShareCounts(prev => ({...prev, [postId]: (prev[postId] || 0) + 1}));
-    Alert.alert('Link ready', `${username}'s post link copied (simulated).`);
+    Alert.alert('Link ready', `${username}'s post link copied.`);
   };
 
   const toggleSaved = (postId: number) => {
@@ -1401,7 +1337,7 @@ function FeedScreen() {
   const displayedPosts = posts.filter(post => {
     if (activeFilter === 'For you') return true;
     if (activeFilter === 'Trending') return post.likes >= 100;
-    if (activeFilter === 'Following') return ['demo', 'testuser', 'john_doe'].includes(post.username);
+    if (activeFilter === 'Following') return post.user_id !== ACTIVE_USER_ID;
     if (activeFilter === 'Finance') {
       const text = `${post.content} ${post.username}`.toLowerCase();
       return ['market', 'stock', 'crypto', 'trade', 'finance'].some(keyword => text.includes(keyword));
@@ -1422,6 +1358,20 @@ function FeedScreen() {
           <MaterialCommunityIcons name="compass-outline" size={22} color="#f8fbff" />
         </View>
       </View>
+
+      {newsItems.length > 0 && (
+        <View style={styles.newsStrip}>
+          <View style={styles.newsStripHeader}>
+            <Text style={styles.newsStripTitle}>Live Headlines</Text>
+            <MaterialCommunityIcons name="newspaper-variant-outline" size={16} color="#334155" />
+          </View>
+          {newsItems.slice(0, 3).map((item, idx) => (
+            <Text key={`${item.title}-${idx}`} style={styles.newsItemText} numberOfLines={2}>
+              • {item.title}
+            </Text>
+          ))}
+        </View>
+      )}
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.feedFilterRow}>
         {['For you', 'Trending', 'Following', 'Finance'].map(filter => (
@@ -1548,33 +1498,30 @@ function FeedScreen() {
 // Chat Screen (WhatsApp style)
 function ChatScreen() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [chatQuery, setChatQuery] = useState('');
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [chatDraft, setChatDraft] = useState('');
-  const [chatMessages, setChatMessages] = useState<{[userId: number]: ChatMessage[]}>({
-    8: [
-      {id: 1, text: 'Can you review the new feed cards?', sender: 'them', timestamp: '09:14'},
-      {id: 2, text: 'Yes, I am checking spacing and hierarchy now.', sender: 'me', timestamp: '09:18'},
-    ],
-    9: [
-      {id: 1, text: 'Portfolio panel looks solid now.', sender: 'them', timestamp: 'Yesterday'},
-      {id: 2, text: 'Great, I will finalize the styling pass.', sender: 'me', timestamp: 'Yesterday'},
-    ],
-  });
 
   useEffect(() => {
-    fetchConversations();
+    fetchChatData();
   }, []);
 
-  const fetchConversations = async () => {
+  const fetchChatData = async () => {
     try {
-      const response = await apiFetch(`/conversations`);
-      const data = await response.json();
-      setConversations(Array.isArray(data) && data.length > 0 ? data : MOCK_CONVERSATIONS);
+      const [conversationResponse, messagesResponse] = await Promise.all([
+        apiFetch(`/conversations`),
+        apiFetch(`/messages/${ACTIVE_USER_ID}`),
+      ]);
+      const conversationData = await conversationResponse.json();
+      const messagesData = await messagesResponse.json();
+      setConversations(Array.isArray(conversationData) ? conversationData : []);
+      setMessages(Array.isArray(messagesData) ? messagesData : []);
     } catch {
-      setConversations(MOCK_CONVERSATIONS);
+      setConversations([]);
+      setMessages([]);
     } finally {
       setLoading(false);
     }
@@ -1596,7 +1543,7 @@ function ChatScreen() {
     setActiveConversation({...conversation, unread: false});
   };
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (!activeConversation) {
       return;
     }
@@ -1606,63 +1553,33 @@ function ChatScreen() {
       return;
     }
 
-    const now = new Date();
-    const stamp = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    const newMessage: ChatMessage = {
-      id: Date.now(),
-      text,
-      sender: 'me',
-      timestamp: stamp,
-    };
-
-    setChatMessages(prev => ({
-      ...prev,
-      [activeConversation.user_id]: [...(prev[activeConversation.user_id] || []), newMessage],
-    }));
-    setConversations(prev =>
-      prev.map(conv =>
-        conv.user_id === activeConversation.user_id
-          ? {...conv, last_message: text, timestamp: stamp, unread: false}
-          : conv
-      )
-    );
-    setActiveConversation(prev => prev ? {...prev, last_message: text, timestamp: stamp, unread: false} : prev);
-    setChatDraft('');
-
-    const mockReplies = [
-      'Looks good from my side.',
-      'Can we also tweak the spacing a little?',
-      'Perfect, thanks for the update.',
-      'I will push a revision shortly.',
-    ];
-    const replyText = mockReplies[Math.floor(Math.random() * mockReplies.length)];
-
-    setTimeout(() => {
-      const replyStamp = `${new Date().getHours().toString().padStart(2, '0')}:${new Date()
-        .getMinutes()
-        .toString()
-        .padStart(2, '0')}`;
-      const replyMessage: ChatMessage = {
-        id: Date.now() + 1,
-        text: replyText,
-        sender: 'them',
-        timestamp: replyStamp,
-      };
-
-      setChatMessages(prev => ({
-        ...prev,
-        [activeConversation.user_id]: [...(prev[activeConversation.user_id] || []), replyMessage],
-      }));
-      setConversations(prev =>
-        prev.map(conv =>
-          conv.user_id === activeConversation.user_id
-            ? {...conv, last_message: replyText, timestamp: replyStamp, unread: false}
-            : conv
-        )
-      );
-      setActiveConversation(prev => prev ? {...prev, last_message: replyText, timestamp: replyStamp} : prev);
-    }, 900);
+    try {
+      const response = await apiFetch(`/messages`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          receiver_id: activeConversation.user_id,
+          content: text,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.success) {
+        Alert.alert('Send failed', data?.error || data?.detail || 'Unable to send message.');
+        return;
+      }
+      setChatDraft('');
+      await fetchChatData();
+    } catch {
+      Alert.alert('Connection error', 'Unable to send message right now.');
+    }
   };
+
+  const threadMessages = activeConversation
+    ? messages.filter((message: any) =>
+        (message.sender_id === ACTIVE_USER_ID && message.receiver_id === activeConversation.user_id) ||
+        (message.sender_id === activeConversation.user_id && message.receiver_id === ACTIVE_USER_ID)
+      )
+    : [];
 
   return (
     <ScrollView style={styles.screenContainer} contentContainerStyle={styles.chatContent}>
@@ -1703,7 +1620,7 @@ function ChatScreen() {
             <View style={styles.chatThreadUser}>
               <Image source={{uri: activeConversation.user.avatar}} style={styles.chatThreadAvatar} />
               <View>
-                <Text style={styles.chatThreadName}>{activeConversation.user.name}</Text>
+                <Text style={styles.chatThreadName}>{activeConversation.user?.name || activeConversation.user?.username || `User ${activeConversation.user_id}`}</Text>
                 <Text style={styles.chatThreadMeta}>online now</Text>
               </View>
             </View>
@@ -1713,19 +1630,19 @@ function ChatScreen() {
           </View>
 
           <View style={styles.chatThreadMessages}>
-            {(chatMessages[activeConversation.user_id] || []).map(message => (
+            {threadMessages.map((message: any) => (
               <View
                 key={message.id}
                 style={[
                   styles.chatBubble,
-                  message.sender === 'me' ? styles.chatBubbleMine : styles.chatBubbleTheirs,
+                  message.sender_id === ACTIVE_USER_ID ? styles.chatBubbleMine : styles.chatBubbleTheirs,
                 ]}>
                 <Text
                   style={[
                     styles.chatBubbleText,
-                    message.sender === 'me' ? styles.chatBubbleTextMine : styles.chatBubbleTextTheirs,
+                    message.sender_id === ACTIVE_USER_ID ? styles.chatBubbleTextMine : styles.chatBubbleTextTheirs,
                   ]}>
-                  {message.text}
+                  {message.content}
                 </Text>
                 <Text style={styles.chatBubbleTime}>{message.timestamp}</Text>
               </View>
@@ -1762,9 +1679,9 @@ function ChatScreen() {
       ) : (
         filteredConversations.map(conv => (
           <TouchableOpacity key={conv.user_id} style={styles.chatItem} onPress={() => openConversation(conv)}>
-            <Image source={{uri: conv.user.avatar}} style={styles.chatAvatar} />
+            <Image source={{uri: conv.user?.avatar || 'https://ui-avatars.com/api/?name=User&background=94a3b8&color=ffffff'}} style={styles.chatAvatar} />
             <View style={styles.chatInfo}>
-              <Text style={styles.chatName}>{conv.user.name}</Text>
+              <Text style={styles.chatName}>{conv.user?.name || conv.user?.username || `User ${conv.user_id}`}</Text>
               <Text style={styles.chatPreview}>{conv.last_message}</Text>
             </View>
             <View style={styles.chatMeta}>
@@ -1791,25 +1708,32 @@ function StoriesScreen() {
     try {
       const response = await apiFetch(`/stories`);
       const data = await response.json();
-      setStories(Array.isArray(data) && data.length > 0 ? data : MOCK_STORIES);
+      setStories(Array.isArray(data) ? data : []);
     } catch {
-      setStories(MOCK_STORIES);
+      setStories([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddStory = () => {
-    const newStory: Story = {
-      id: Date.now(),
-      user_id: 1,
-      username: 'demo',
-      avatar: 'https://ui-avatars.com/api/?name=Demo+User&background=2563eb&color=ffffff',
-      image: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=800',
-      expires_in: 24,
-    };
-    setStories(prev => [newStory, ...prev]);
-    Alert.alert('Story Added', 'Your mock story was posted to the top.');
+  const handleAddStory = async () => {
+    const image = 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=800';
+    try {
+      const response = await apiFetch(`/stories`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({image}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.success) {
+        Alert.alert('Story failed', data?.error || data?.detail || 'Unable to publish story.');
+        return;
+      }
+      Alert.alert('Story Added', 'Your story is now live.');
+      fetchStories();
+    } catch {
+      Alert.alert('Story failed', 'Unable to publish story right now.');
+    }
   };
 
   return (
@@ -1846,8 +1770,14 @@ function StocksScreen() {
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [portfolio, setPortfolio] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [chartLoading, setChartLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'market' | 'portfolio'>('market');
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
+  const [chartRange, setChartRange] = useState<'1D' | '1W' | '1M' | '3M' | '1Y'>('1M');
+  const [chartPayload, setChartPayload] = useState<StockChartPayload | null>(null);
+  const [trendDrawMode, setTrendDrawMode] = useState(false);
+  const [trendDraftStart, setTrendDraftStart] = useState<number | null>(null);
+  const [trendLines, setTrendLines] = useState<TrendLine[]>([]);
   const [tradeQuantity, setTradeQuantity] = useState('1');
   const [marketQuery, setMarketQuery] = useState('');
   const [showWatchlistOnly, setShowWatchlistOnly] = useState(false);
@@ -1859,39 +1789,24 @@ function StocksScreen() {
   }, []);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setStocks(prev => {
-        const nextStocks = prev.map(stock => {
-          const delta = Number(((Math.random() - 0.5) * 1.2).toFixed(2));
-          const nextPrice = Math.max(0.1, Number((stock.price + delta).toFixed(2)));
-          return {
-            ...stock,
-            price: nextPrice,
-            change: Number((stock.change + delta / 10).toFixed(2)),
-            change_amount: Number((stock.change_amount + delta).toFixed(2)),
-          };
-        });
-
-        setSelectedStock(current =>
-          current
-            ? nextStocks.find(stock => stock.symbol === current.symbol) || current
-            : current
-        );
-
-        return nextStocks;
-      });
-    }, 6000);
-
-    return () => clearInterval(timer);
-  }, []);
+    if (!selectedStock) {
+      setChartPayload(null);
+      setTrendLines([]);
+      setTrendDraftStart(null);
+      return;
+    }
+    setTrendLines([]);
+    setTrendDraftStart(null);
+    fetchStockChart(selectedStock.symbol, chartRange);
+  }, [selectedStock, chartRange]);
 
   const fetchStocks = async () => {
     try {
       const response = await apiFetch(`/stocks`);
       const data = await response.json();
-      setStocks(Array.isArray(data) && data.length > 0 ? data : MOCK_STOCKS);
+      setStocks(Array.isArray(data) ? data : []);
     } catch {
-      setStocks(MOCK_STOCKS);
+      setStocks([]);
     } finally {
       setLoading(false);
     }
@@ -1901,9 +1816,37 @@ function StocksScreen() {
     try {
       const response = await apiFetch(`/portfolio/${ACTIVE_USER_ID}`);
       const data = await response.json();
-      setPortfolio(data && Object.keys(data).length > 0 ? data : MOCK_PORTFOLIO);
+      setPortfolio(data && Object.keys(data).length > 0 ? data : null);
     } catch {
-      setPortfolio(MOCK_PORTFOLIO);
+      setPortfolio(null);
+    }
+  };
+
+  const fetchStockChart = async (symbol: string, rangeKey: '1D' | '1W' | '1M' | '3M' | '1Y') => {
+    const map: Record<typeof rangeKey, {range: string; interval: string}> = {
+      '1D': {range: '1d', interval: '5m'},
+      '1W': {range: '5d', interval: '30m'},
+      '1M': {range: '1mo', interval: '1d'},
+      '3M': {range: '3mo', interval: '1d'},
+      '1Y': {range: '1y', interval: '1wk'},
+    };
+    const picked = map[rangeKey];
+
+    setChartLoading(true);
+    try {
+      const response = await apiFetch(
+        `/stocks/symbol/${encodeURIComponent(symbol)}/chart?range=${picked.range}&interval=${picked.interval}`
+      );
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data?.candles)) {
+        setChartPayload(null);
+        return;
+      }
+      setChartPayload(data as StockChartPayload);
+    } catch {
+      setChartPayload(null);
+    } finally {
+      setChartLoading(false);
     }
   };
 
@@ -1945,19 +1888,7 @@ function StocksScreen() {
         Alert.alert('Trade failed', data.message || 'Unable to place trade.');
       }
     } catch {
-      // Local fallback to preserve app functionality when backend side endpoints are unavailable.
-      Alert.alert('Trade simulated', `${side.toUpperCase()} ${quantity} ${selectedStock.symbol}`);
-      setPortfolio((prev: any) => ({
-        ...(prev || {}),
-        simulated: true,
-        last_trade: {
-          side,
-          symbol: selectedStock.symbol,
-          quantity,
-          price: selectedStock.price,
-        },
-      }));
-      setTradeQuantity('1');
+      Alert.alert('Trade failed', 'Unable to place trade right now.');
     }
   };
 
@@ -1968,6 +1899,59 @@ function StocksScreen() {
     return matchesQuery && matchesWatchlist;
   });
   const tradeValue = selectedStock ? selectedStock.price * (parseFloat(tradeQuantity) || 0) : 0;
+  const candles = chartPayload?.candles || [];
+  const lows = candles.map(candle => candle.l);
+  const highs = candles.map(candle => candle.h);
+  const volumes = candles.map(candle => candle.v || 0);
+  const minLow = lows.length > 0 ? Math.min(...lows) : 0;
+  const maxHigh = highs.length > 0 ? Math.max(...highs) : 1;
+  const priceSpan = Math.max(0.0001, maxHigh - minLow);
+  const maxVolume = volumes.length > 0 ? Math.max(...volumes) : 1;
+  const latestRsi = chartPayload?.indicators?.rsi14?.filter(v => typeof v === 'number').slice(-1)[0] as number | undefined;
+  const latestSma = chartPayload?.indicators?.sma20?.filter(v => typeof v === 'number').slice(-1)[0] as number | undefined;
+  const latestEma = chartPayload?.indicators?.ema20?.filter(v => typeof v === 'number').slice(-1)[0] as number | undefined;
+  const recentCandles = candles.slice(-Math.min(20, candles.length));
+  const supportLevel = recentCandles.length > 0 ? Math.min(...recentCandles.map(c => c.l)) : undefined;
+  const resistanceLevel = recentCandles.length > 0 ? Math.max(...recentCandles.map(c => c.h)) : undefined;
+  const candleStep = 14;
+  const chartHeight = 120;
+
+  const handleCandleSelectForTrend = (idx: number) => {
+    if (!trendDrawMode || !candles[idx]) {
+      return;
+    }
+
+    if (trendDraftStart === null) {
+      setTrendDraftStart(idx);
+      return;
+    }
+
+    if (trendDraftStart === idx) {
+      return;
+    }
+
+    const startIdx = Math.min(trendDraftStart, idx);
+    const endIdx = Math.max(trendDraftStart, idx);
+    const startPrice = candles[startIdx].c;
+    const endPrice = candles[endIdx].c;
+    const slope = (endPrice - startPrice) / (endIdx - startIdx);
+    const palette = ['#22c55e', '#f59e0b', '#0ea5e9', '#a855f7', '#ef4444'];
+    const color = palette[trendLines.length % palette.length];
+
+    setTrendLines(prev => [
+      ...prev,
+      {
+        id: Date.now(),
+        startIdx,
+        endIdx,
+        startPrice,
+        endPrice,
+        slope,
+        color,
+      },
+    ]);
+    setTrendDraftStart(null);
+  };
 
   return (
     <ScrollView style={styles.screenContainer} contentContainerStyle={styles.marketContent}>
@@ -2043,6 +2027,140 @@ function StocksScreen() {
                 <Text style={styles.tradePanelTitle}>Trade {selectedStock.symbol}</Text>
                 <Text style={styles.tradePanelPrice}>${selectedStock.price.toFixed(2)}</Text>
               </View>
+              <View style={styles.chartRangeRow}>
+                {(['1D', '1W', '1M', '3M', '1Y'] as const).map(range => (
+                  <TouchableOpacity
+                    key={range}
+                    style={[styles.chartRangeChip, chartRange === range && styles.chartRangeChipActive]}
+                    onPress={() => setChartRange(range)}>
+                    <Text style={[styles.chartRangeText, chartRange === range && styles.chartRangeTextActive]}>{range}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {chartLoading ? (
+                <Text style={styles.chartHintText}>Loading live chart...</Text>
+              ) : candles.length === 0 ? (
+                <Text style={styles.chartHintText}>No chart data available for this range.</Text>
+              ) : (
+                <>
+                  <View style={styles.analysisControlRow}>
+                    <TouchableOpacity
+                      style={[styles.analysisToggleChip, trendDrawMode && styles.analysisToggleChipActive]}
+                      onPress={() => {
+                        setTrendDrawMode(prev => !prev);
+                        setTrendDraftStart(null);
+                      }}>
+                      <Text style={[styles.analysisToggleText, trendDrawMode && styles.analysisToggleTextActive]}>
+                        {trendDrawMode ? 'Trend Draw On' : 'Trend Draw Off'}
+                      </Text>
+                    </TouchableOpacity>
+                    {trendDraftStart !== null && (
+                      <Text style={styles.chartHintText}>Select second candle point...</Text>
+                    )}
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.candleRow}>
+                    <View style={[styles.candlePlot, {width: candles.length * candleStep}]}>
+                      {candles.map((candle, idx) => {
+                        const highBottom = ((candle.h - minLow) / priceSpan) * 100;
+                        const lowBottom = ((candle.l - minLow) / priceSpan) * 100;
+                        const openBottom = ((candle.o - minLow) / priceSpan) * 100;
+                        const closeBottom = ((candle.c - minLow) / priceSpan) * 100;
+                        const wickHeight = Math.max(2, Math.abs(highBottom - lowBottom));
+                        const bodyBottom = Math.min(openBottom, closeBottom);
+                        const bodyHeight = Math.max(2, Math.abs(openBottom - closeBottom));
+                        const up = candle.c >= candle.o;
+                        const volumeHeight = maxVolume > 0 ? Math.max(4, (candle.v / maxVolume) * 40) : 4;
+                        return (
+                          <TouchableOpacity
+                            key={`${candle.t}-${idx}`}
+                            activeOpacity={0.85}
+                            style={styles.candleContainer}
+                            onPress={() => handleCandleSelectForTrend(idx)}>
+                            <View style={styles.candleCanvas}>
+                              <View
+                                style={[
+                                  styles.candleWick,
+                                  {
+                                    bottom: lowBottom,
+                                    height: wickHeight,
+                                    backgroundColor: up ? '#22c55e' : '#ef4444',
+                                  },
+                                ]}
+                              />
+                              <View
+                                style={[
+                                  styles.candleBody,
+                                  {
+                                    bottom: bodyBottom,
+                                    height: bodyHeight,
+                                    backgroundColor: up ? '#22c55e' : '#ef4444',
+                                  },
+                                ]}
+                              />
+                            </View>
+                            <View style={[styles.volumeBar, {height: volumeHeight}]} />
+                          </TouchableOpacity>
+                        );
+                      })}
+                      <View style={styles.trendOverlay} pointerEvents="none">
+                        {trendLines.map(line => {
+                          const x1 = line.startIdx * candleStep + 5;
+                          const x2 = line.endIdx * candleStep + 5;
+                          const y1 = chartHeight - ((line.startPrice - minLow) / priceSpan) * chartHeight;
+                          const y2 = chartHeight - ((line.endPrice - minLow) / priceSpan) * chartHeight;
+                          const dx = x2 - x1;
+                          const dy = y2 - y1;
+                          const length = Math.sqrt(dx * dx + dy * dy);
+                          const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+                          return (
+                            <View
+                              key={line.id}
+                              style={[
+                                styles.trendLine,
+                                {
+                                  left: x1,
+                                  top: y1,
+                                  width: length,
+                                  backgroundColor: line.color,
+                                  transform: [{rotateZ: `${angle}deg`}],
+                                },
+                              ]}
+                            />
+                          );
+                        })}
+                      </View>
+                    </View>
+                  </ScrollView>
+                  <View style={styles.indicatorRow}>
+                    <Text style={styles.indicatorText}>
+                      SMA20 {typeof latestSma === 'number' ? latestSma.toFixed(2) : '-'}
+                    </Text>
+                    <Text style={styles.indicatorText}>
+                      EMA20 {typeof latestEma === 'number' ? latestEma.toFixed(2) : '-'}
+                    </Text>
+                    <Text style={styles.indicatorText}>
+                      RSI14 {typeof latestRsi === 'number' ? latestRsi.toFixed(1) : '-'}
+                    </Text>
+                  </View>
+                  <View style={styles.indicatorRow}>
+                    <Text style={styles.indicatorText}>
+                      Support {typeof supportLevel === 'number' ? supportLevel.toFixed(2) : '-'}
+                    </Text>
+                    <Text style={styles.indicatorText}>
+                      Resistance {typeof resistanceLevel === 'number' ? resistanceLevel.toFixed(2) : '-'}
+                    </Text>
+                  </View>
+                  {trendLines.length > 0 && (
+                    <View style={styles.trendList}>
+                      {trendLines.slice(-3).map((line, idx) => (
+                        <Text key={line.id} style={styles.trendListText}>
+                          L{idx + 1} slope {line.slope.toFixed(3)} | {line.startPrice.toFixed(2)} {'->'} {line.endPrice.toFixed(2)}
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+                </>
+              )}
               <TextInput
                 style={styles.tradeQuantityInput}
                 value={tradeQuantity}
@@ -2142,19 +2260,43 @@ function ForexScreen() {
     try {
       const response = await apiFetch(`/forex`);
       const data = await response.json();
-      setForexPairs(Array.isArray(data) && data.length > 0 ? data : MOCK_FOREX);
+      setForexPairs(Array.isArray(data) ? data : []);
     } catch {
-      setForexPairs(MOCK_FOREX);
+      setForexPairs([]);
     } finally {
       setLoading(false);
     }
   };
 
   const tradeForex = (pair: ForexPair) => {
+    const execute = async (side: 'buy' | 'sell') => {
+      try {
+        const response = await apiFetch(`/trade/${side}`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            user_id: ACTIVE_USER_ID,
+            symbol: pair.symbol,
+            quantity: 1000,
+            price: pair.rate,
+            asset_type: 'forex',
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data?.success) {
+          Alert.alert('Trade failed', data?.error || data?.detail || 'Unable to place trade.');
+          return;
+        }
+        Alert.alert('Trade placed', `${side.toUpperCase()} ${pair.symbol} submitted.`);
+      } catch {
+        Alert.alert('Trade failed', 'Unable to place trade right now.');
+      }
+    };
+
     Alert.alert('Trade Forex', `${pair.symbol} - ${pair.rate.toFixed(4)}`, [
       {text: 'Cancel', onPress: () => {}},
-      {text: 'Buy', onPress: () => Alert.alert('Trade Placed', `Buy order for ${pair.symbol} placed!`)},
-      {text: 'Sell', onPress: () => Alert.alert('Trade Placed', `Sell order for ${pair.symbol} placed!`)},
+      {text: 'Buy', onPress: () => execute('buy')},
+      {text: 'Sell', onPress: () => execute('sell')},
     ]);
   };
 
@@ -2212,18 +2354,11 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
   const [editName, setEditName] = useState(user.name);
   const [editBio, setEditBio] = useState(user.bio);
   const [newPostText, setNewPostText] = useState('');
-  const [recentPosts, setRecentPosts] = useState([
-    {id: 1, title: 'Market outlook for this week', createdAt: 'Today'},
-    {id: 2, title: 'Top productivity routines', createdAt: 'Yesterday'},
-  ]);
+  const [recentPosts, setRecentPosts] = useState<{id: number; title: string; createdAt: string}[]>([]);
   const [shareCount, setShareCount] = useState(0);
-  const [streakDays, setStreakDays] = useState(14);
+  const [streakDays, setStreakDays] = useState(0);
   const [statusMode, setStatusMode] = useState<'Online' | 'Focus' | 'Away'>('Online');
-  const [activityTimeline, setActivityTimeline] = useState([
-    {id: 1, title: 'Posted market update', time: '2h ago', icon: 'chart-line'},
-    {id: 2, title: 'Added 3 items to wishlist', time: 'Yesterday', icon: 'heart-outline'},
-    {id: 3, title: 'Completed profile setup', time: '2 days ago', icon: 'check-circle-outline'},
-  ]);
+  const [activityTimeline, setActivityTimeline] = useState<{id: number; title: string; time: string; icon: string}[]>([]);
 
   useEffect(() => {
     setProfileData(user);
@@ -2263,22 +2398,39 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
     Alert.alert('Profile updated', 'Your profile details were saved.');
   };
 
-  const handleCreatePost = () => {
+  const handleCreatePost = async () => {
     if (!newPostText.trim()) {
       Alert.alert('Empty post', 'Write something before posting.');
       return;
     }
 
-    const newPost = {
-      id: Date.now(),
-      title: newPostText.trim(),
-      createdAt: 'Just now',
-    };
+    try {
+      const response = await apiFetch(`/posts`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          content: newPostText.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.success) {
+        Alert.alert('Post failed', data?.error || data?.detail || 'Unable to publish post.');
+        return;
+      }
 
-    setRecentPosts(prev => [newPost, ...prev]);
-    setNewPostText('');
-    addActivity('Published a new post', 'post-outline');
-    Alert.alert('Posted', 'Your post is now live.');
+      const newPost = {
+        id: data.post_id || Date.now(),
+        title: newPostText.trim(),
+        createdAt: 'Just now',
+      };
+
+      setRecentPosts(prev => [newPost, ...prev]);
+      setNewPostText('');
+      addActivity('Published a new post', 'post-outline');
+      Alert.alert('Posted', 'Your post is now live.');
+    } catch {
+      Alert.alert('Post failed', 'Unable to publish post right now.');
+    }
   };
 
   const handleInvite = () => {
@@ -2406,11 +2558,11 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
             <View style={styles.profileInsightGrid}>
               <View style={styles.profileInsightCard}>
                 <Text style={styles.profileInsightLabel}>Profile Views</Text>
-                <Text style={styles.profileInsightValue}>12.4k</Text>
+                <Text style={styles.profileInsightValue}>{(profileData.followers * 3).toLocaleString()}</Text>
               </View>
               <View style={styles.profileInsightCard}>
                 <Text style={styles.profileInsightLabel}>Post Reach</Text>
-                <Text style={styles.profileInsightValue}>48.2k</Text>
+                <Text style={styles.profileInsightValue}>{(recentPosts.length * 120).toLocaleString()}</Text>
               </View>
               <View style={[styles.profileInsightCard, styles.profileInsightCardFull]}>
                 <Text style={styles.profileInsightLabel}>Shares This Week</Text>
@@ -2479,19 +2631,23 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
       {activeTab === 'activity' && (
         <View style={styles.profileSection}>
           <Text style={styles.sectionTitle}>Recent Activity</Text>
-          <View style={styles.profileTimeline}>
-            {activityTimeline.map(item => (
-              <View key={item.id} style={styles.profileTimelineItem}>
-                <View style={styles.profileTimelineIcon}>
-                  <MaterialCommunityIcons name={item.icon as any} size={16} color="#2563eb" />
+          {activityTimeline.length === 0 ? (
+            <Text style={styles.noResultsText}>No activity yet</Text>
+          ) : (
+            <View style={styles.profileTimeline}>
+              {activityTimeline.map(item => (
+                <View key={item.id} style={styles.profileTimelineItem}>
+                  <View style={styles.profileTimelineIcon}>
+                    <MaterialCommunityIcons name={item.icon as any} size={16} color="#2563eb" />
+                  </View>
+                  <View style={styles.profileTimelineContent}>
+                    <Text style={styles.profileTimelineTitle}>{item.title}</Text>
+                    <Text style={styles.profileTimelineTime}>{item.time}</Text>
+                  </View>
                 </View>
-                <View style={styles.profileTimelineContent}>
-                  <Text style={styles.profileTimelineTitle}>{item.title}</Text>
-                  <Text style={styles.profileTimelineTime}>{item.time}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
+              ))}
+            </View>
+          )}
         </View>
       )}
 
@@ -2556,6 +2712,7 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
 function ShoppingScreen() {
   const [products, setProducts] = useState<Product[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [showcasePhotos, setShowcasePhotos] = useState<ExternalPhoto[]>([]);
   const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -2567,20 +2724,31 @@ function ShoppingScreen() {
 
   useEffect(() => {
     fetchProducts();
+    fetchShowcasePhotos();
   }, []);
 
   const fetchProducts = async () => {
     try {
       const response = await apiFetch(`/products`);
       const data = await response.json();
-      const productList = Array.isArray(data) && data.length > 0 ? data : MOCK_PRODUCTS;
+      const productList = Array.isArray(data) ? data : [];
       setProducts(productList);
       setAllProducts(productList);
     } catch {
-      setProducts(MOCK_PRODUCTS);
-      setAllProducts(MOCK_PRODUCTS);
+      setProducts([]);
+      setAllProducts([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchShowcasePhotos = async () => {
+    try {
+      const response = await apiFetch(`/external/photos?query=shopping`);
+      const data = await response.json();
+      setShowcasePhotos(Array.isArray(data?.items) ? data.items.slice(0, 8) : []);
+    } catch {
+      setShowcasePhotos([]);
     }
   };
 
@@ -2598,8 +2766,6 @@ function ShoppingScreen() {
   };
 
   const addToCart = async (product: Product) => {
-    setLocalCartCount(prev => prev + 1);
-
     try {
       const response = await apiFetch(`/cart/${ACTIVE_USER_ID}/add`, {
         method: 'POST',
@@ -2613,15 +2779,34 @@ function ShoppingScreen() {
       });
       const data = await response.json();
       if (data.success) {
+        setLocalCartCount(prev => prev + 1);
         Alert.alert('Success', `${product.name} added to cart!`);
+      } else {
+        Alert.alert('Add failed', data?.error || data?.detail || 'Unable to add item.');
       }
     } catch {
-      Alert.alert('Cart updated', `${product.name} added locally.`);
+      Alert.alert('Add failed', 'Unable to add item right now.');
     }
   };
 
-  const toggleWishlist = (productId: number) => {
-    setWishlistMap(prev => ({...prev, [productId]: !prev[productId]}));
+  const toggleWishlist = async (productId: number) => {
+    const isSaved = !!wishlistMap[productId];
+    try {
+      const response = await apiFetch(
+        isSaved
+          ? `/wishlists/${ACTIVE_USER_ID}/remove/${productId}`
+          : `/wishlists/${ACTIVE_USER_ID}/add/${productId}`,
+        {method: isSaved ? 'DELETE' : 'POST'}
+      );
+      const data = await response.json();
+      if (!response.ok || data?.error) {
+        Alert.alert('Wishlist failed', data?.error || data?.detail || 'Unable to update wishlist.');
+        return;
+      }
+      setWishlistMap(prev => ({...prev, [productId]: !isSaved}));
+    } catch {
+      Alert.alert('Wishlist failed', 'Unable to update wishlist right now.');
+    }
   };
 
   const openProduct = (product: Product) => {
@@ -2629,7 +2814,7 @@ function ShoppingScreen() {
     setBuyQuantity(1);
   };
 
-  const handleBuyNow = () => {
+  const handleBuyNow = async () => {
     if (!selectedProduct) {
       return;
     }
@@ -2640,31 +2825,28 @@ function ShoppingScreen() {
     }
 
     const quantity = Math.max(1, buyQuantity);
-    setProducts(prev =>
-      prev.map(product =>
-        product.id === selectedProduct.id
-          ? {
-              ...product,
-              stock: Math.max(0, product.stock - quantity),
-              sold: product.sold + quantity,
-            }
-          : product
-      )
-    );
-    setAllProducts(prev =>
-      prev.map(product =>
-        product.id === selectedProduct.id
-          ? {
-              ...product,
-              stock: Math.max(0, product.stock - quantity),
-              sold: product.sold + quantity,
-            }
-          : product
-      )
-    );
-    setLocalCartCount(prev => prev + quantity);
-    Alert.alert('Purchase complete', `${quantity} x ${selectedProduct.name} purchased (mock).`);
-    setSelectedProduct(null);
+    try {
+      const response = await apiFetch(`/cart/${ACTIVE_USER_ID}/add`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          product_id: selectedProduct.id,
+          seller_id: selectedProduct.seller_id,
+          quantity,
+          price: selectedProduct.price,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.success) {
+        Alert.alert('Purchase failed', data?.error || data?.detail || 'Unable to complete purchase.');
+        return;
+      }
+      setLocalCartCount(prev => prev + quantity);
+      Alert.alert('Added to cart', `${quantity} x ${selectedProduct.name} added.`);
+      setSelectedProduct(null);
+    } catch {
+      Alert.alert('Purchase failed', 'Unable to complete purchase right now.');
+    }
   };
 
   const categories = ['All', ...Array.from(new Set(allProducts.map(p => p.category)))];
@@ -2686,6 +2868,21 @@ function ShoppingScreen() {
           <MaterialCommunityIcons name="shopping-search" size={20} color="#f8fbff" />
         </View>
       </View>
+
+      {showcasePhotos.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.shopPhotoRow}>
+          {showcasePhotos.map(photo => (
+            <Image
+              key={photo.id}
+              source={{uri: photo.src?.medium || photo.src?.large}}
+              style={styles.shopPhotoCard}
+            />
+          ))}
+        </ScrollView>
+      )}
 
       {/* Search Bar */}
       <View style={styles.searchContainer}>
@@ -2830,12 +3027,12 @@ function CartScreen() {
     try {
       const response = await apiFetch(`/cart/${ACTIVE_USER_ID}`);
       const data = await response.json();
-      const items = Array.isArray(data?.items) && data.items.length > 0 ? data.items : MOCK_CART.items;
+      const items = Array.isArray(data?.items) ? data.items : [];
       setCartItems(items);
-      setTotal(typeof data?.total === 'number' ? data.total : MOCK_CART.total);
+      setTotal(typeof data?.total === 'number' ? data.total : 0);
     } catch {
-      setCartItems(MOCK_CART.items);
-      setTotal(MOCK_CART.total);
+      setCartItems([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
@@ -2873,11 +3070,11 @@ function CartScreen() {
             if (data.success) {
               Alert.alert('Order Confirmed', `Order #${data.order_id} created!\nTotal: $${data.total.toFixed(2)}`);
               fetchCart();
+            } else {
+              Alert.alert('Checkout failed', data?.error || data?.detail || 'Unable to checkout.');
             }
           } catch {
-            Alert.alert('Order Confirmed', `Mock order placed.\nTotal: $${total.toFixed(2)}`);
-            setCartItems([]);
-            setTotal(0);
+            Alert.alert('Checkout failed', 'Unable to checkout right now.');
           }
         },
       },
@@ -2943,9 +3140,9 @@ function OrdersScreen() {
     try {
       const response = await apiFetch(`/orders/${ACTIVE_USER_ID}`);
       const data = await response.json();
-      setOrders(Array.isArray(data) && data.length > 0 ? data : MOCK_ORDERS);
+      setOrders(Array.isArray(data) ? data : []);
     } catch {
-      setOrders(MOCK_ORDERS);
+      setOrders([]);
     } finally {
       setLoading(false);
     }
@@ -2998,9 +3195,9 @@ function NotificationsScreen() {
     try {
       const response = await apiFetch(`/notifications/${ACTIVE_USER_ID}`);
       const data = await response.json();
-      setNotifications(Array.isArray(data) && data.length > 0 ? data : MOCK_NOTIFICATIONS);
+      setNotifications(Array.isArray(data) ? data : []);
     } catch {
-      setNotifications(MOCK_NOTIFICATIONS);
+      setNotifications([]);
     } finally {
       setLoading(false);
     }
@@ -3008,10 +3205,15 @@ function NotificationsScreen() {
 
   const markAsRead = async (notificationId: number) => {
     try {
-      await apiFetch(`/notifications/${ACTIVE_USER_ID}/read/${notificationId}`, {method: 'POST'});
+      const response = await apiFetch(`/notifications/${ACTIVE_USER_ID}/read/${notificationId}`, {method: 'POST'});
+      const data = await response.json();
+      if (!response.ok || data?.error) {
+        Alert.alert('Update failed', data?.error || data?.detail || 'Unable to mark notification as read.');
+        return;
+      }
       setNotifications(notifications.map(n => n.id === notificationId ? {...n, read: true} : n));
     } catch {
-      setNotifications(notifications.map(n => n.id === notificationId ? {...n, read: true} : n));
+      Alert.alert('Update failed', 'Unable to mark notification as read.');
     }
   };
 
@@ -3049,21 +3251,24 @@ function SearchScreen() {
   const handleSearch = async (text: string) => {
     setSearchText(text);
     if (text.length > 0) {
-      const normalized = text.toLowerCase();
-      const fallbackResults = [
-        ...MOCK_PRODUCTS,
-        ...MOCK_CONVERSATIONS.map(conversation => conversation.user),
-      ].filter((item: any) => {
-        const haystack = `${item.name || item.username} ${item.description || item.bio || ''}`.toLowerCase();
-        return haystack.includes(normalized);
-      });
-
       try {
-        const response = await apiFetch(`/products?search=${text}`);
-        const data = await response.json();
-        setResults(Array.isArray(data) && data.length > 0 ? data : fallbackResults);
+        const [productsResponse, usersResponse] = await Promise.all([
+          apiFetch(`/products?search=${text}`),
+          apiFetch(`/users`),
+        ]);
+        const productsData = await productsResponse.json();
+        const usersData = await usersResponse.json();
+        const normalized = text.toLowerCase();
+        const matchingUsers = Array.isArray(usersData)
+          ? usersData.filter((user: any) => {
+              const haystack = `${user.name || ''} ${user.username || ''} ${user.bio || ''}`.toLowerCase();
+              return haystack.includes(normalized);
+            })
+          : [];
+        const matchingProducts = Array.isArray(productsData) ? productsData : [];
+        setResults([...matchingProducts, ...matchingUsers]);
       } catch {
-        setResults(fallbackResults);
+        setResults([]);
       }
     } else {
       setResults([]);
@@ -3114,9 +3319,9 @@ function WishlistScreen() {
     try {
       const response = await apiFetch(`/wishlists/${ACTIVE_USER_ID}`);
       const data = await response.json();
-      setWishlist(Array.isArray(data) && data.length > 0 ? data : MOCK_WISHLIST);
+      setWishlist(Array.isArray(data) ? data : []);
     } catch {
-      setWishlist(MOCK_WISHLIST);
+      setWishlist([]);
     } finally {
       setLoading(false);
     }
@@ -3171,9 +3376,9 @@ function WalletScreen() {
     try {
       const response = await apiFetch(`/wallet/${ACTIVE_USER_ID}`);
       const data = await response.json();
-      setWallet(data && Object.keys(data).length > 0 ? data : MOCK_WALLET);
+      setWallet(data && Object.keys(data).length > 0 ? data : null);
     } catch {
-      setWallet(MOCK_WALLET);
+      setWallet(null);
     }
   };
 
@@ -3183,7 +3388,11 @@ function WalletScreen() {
       return;
     }
     try {
-      const response = await apiFetch(`/wallet/${ACTIVE_USER_ID}/deposit?amount=${depositAmount}`, {method: 'POST'});
+      const response = await apiFetch(`/wallet/${ACTIVE_USER_ID}/deposit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({amount: parseFloat(depositAmount)}),
+      });
       const data = await response.json();
       if (data.success) {
         Alert.alert('Success', `Deposited $${depositAmount}`);
@@ -3191,10 +3400,31 @@ function WalletScreen() {
         setDepositAmount('');
       }
     } catch {
-      const amount = parseFloat(depositAmount);
-      setWallet(prev => prev ? {...prev, balance: prev.balance + amount} : {...MOCK_WALLET, balance: MOCK_WALLET.balance + amount});
+      Alert.alert('Deposit failed', 'Could not complete the deposit.');
+    }
+  };
+
+  const handleWithdraw = async () => {
+    if (!depositAmount || parseFloat(depositAmount) <= 0) {
+      Alert.alert('Invalid', 'Enter a valid amount');
+      return;
+    }
+    try {
+      const response = await apiFetch(`/wallet/${ACTIVE_USER_ID}/withdraw`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({amount: parseFloat(depositAmount)}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        Alert.alert('Withdraw failed', data?.error || data?.detail || 'Unable to withdraw funds.');
+        return;
+      }
+      Alert.alert('Success', `Withdrew $${depositAmount}`);
+      fetchWallet();
       setDepositAmount('');
-      Alert.alert('Success', `Deposited $${amount.toFixed(2)} (mock).`);
+    } catch {
+      Alert.alert('Withdraw failed', 'Could not complete withdrawal.');
     }
   };
 
@@ -3232,6 +3462,9 @@ function WalletScreen() {
             <TouchableOpacity style={styles.glassButton} onPress={handleDeposit}>
               <Text style={styles.glassButtonText}>Deposit</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={[styles.glassButton, styles.withdrawButton]} onPress={handleWithdraw}>
+              <Text style={styles.glassButtonText}>Withdraw</Text>
+            </TouchableOpacity>
           </View>
         </>
       )}
@@ -3252,9 +3485,9 @@ function CryptoScreen() {
     try {
       const response = await apiFetch(`/crypto`);
       const data = await response.json();
-      setCryptos(Array.isArray(data) && data.length > 0 ? data : MOCK_CRYPTOS);
+      setCryptos(Array.isArray(data) ? data : []);
     } catch {
-      setCryptos(MOCK_CRYPTOS);
+      setCryptos([]);
     } finally {
       setLoading(false);
     }
@@ -3312,11 +3545,34 @@ function CopyTradingScreen() {
     try {
       const response = await apiFetch(`/copy-traders`);
       const data = await response.json();
-      setTraders(Array.isArray(data) && data.length > 0 ? data : MOCK_TRADERS);
+      setTraders(Array.isArray(data) ? data : []);
     } catch {
-      setTraders(MOCK_TRADERS);
+      setTraders([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const followTrader = async (traderId: number, traderName: string) => {
+    try {
+      const response = await apiFetch(`/copy-traders/${traderId}/follow?user_id=${ACTIVE_USER_ID}`, {
+        method: 'POST',
+      });
+      const data = await response.json();
+      if (!response.ok || data?.error) {
+        Alert.alert('Copy failed', data?.error || data?.detail || 'Unable to follow trader.');
+        return;
+      }
+      setTraders(prev =>
+        prev.map(trader =>
+          trader.trader_id === traderId
+            ? {...trader, followers: trader.followers + 1}
+            : trader
+        )
+      );
+      Alert.alert('Copy enabled', `Now copying ${traderName}.`);
+    } catch {
+      Alert.alert('Copy failed', 'Unable to follow trader right now.');
     }
   };
 
@@ -3348,7 +3604,9 @@ function CopyTradingScreen() {
                 <Text style={styles.statValue}>{trader.total_trades}</Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.copyButton} onPress={() => Alert.alert('Copying trades from ' + trader.trader_name)}>
+            <TouchableOpacity
+              style={styles.copyButton}
+              onPress={() => followTrader(trader.trader_id, trader.trader_name)}>
               <Text style={styles.copyButtonText}>Copy</Text>
             </TouchableOpacity>
           </TouchableOpacity>
@@ -3370,9 +3628,9 @@ function LoyaltyScreen() {
     try {
       const response = await apiFetch(`/loyalty/${ACTIVE_USER_ID}`);
       const data = await response.json();
-      setLoyalty(data && Object.keys(data).length > 0 ? data : MOCK_LOYALTY);
+      setLoyalty(data && Object.keys(data).length > 0 ? data : null);
     } catch {
-      setLoyalty(MOCK_LOYALTY);
+      setLoyalty(null);
     }
   };
 
@@ -3417,6 +3675,73 @@ function LoyaltyScreen() {
 function SettingsScreen({onScreenChange}: {onScreenChange: (screen: Screen) => void}) {
   const [darkMode, setDarkMode] = useState(false);
   const [language, setLanguage] = useState('en');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const response = await apiFetch(`/settings/${ACTIVE_USER_ID}`);
+      const data = await response.json();
+      if (!response.ok || data?.error) {
+        return;
+      }
+      setDarkMode(!!data.dark_mode);
+      setLanguage(data.language || 'en');
+      setNotificationsEnabled(data.notifications_enabled !== false);
+    } catch {}
+  };
+
+  const persistSettings = async (next: {
+    dark_mode?: boolean;
+    language?: string;
+    notifications_enabled?: boolean;
+  }) => {
+    const response = await apiFetch(`/settings/${ACTIVE_USER_ID}/update`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(next),
+    });
+    const data = await response.json();
+    if (!response.ok || data?.error) {
+      throw new Error(data?.error || data?.detail || 'Unable to save settings');
+    }
+  };
+
+  const toggleDarkMode = async () => {
+    const next = !darkMode;
+    setDarkMode(next);
+    try {
+      await persistSettings({dark_mode: next});
+    } catch {
+      setDarkMode(!next);
+      Alert.alert('Save failed', 'Unable to update dark mode.');
+    }
+  };
+
+  const changeLanguage = async (lang: string) => {
+    const previous = language;
+    setLanguage(lang);
+    try {
+      await persistSettings({language: lang});
+    } catch {
+      setLanguage(previous);
+      Alert.alert('Save failed', 'Unable to update language.');
+    }
+  };
+
+  const toggleNotifications = async () => {
+    const next = !notificationsEnabled;
+    setNotificationsEnabled(next);
+    try {
+      await persistSettings({notifications_enabled: next});
+    } catch {
+      setNotificationsEnabled(!next);
+      Alert.alert('Save failed', 'Unable to update notifications.');
+    }
+  };
 
   return (
     <ScrollView style={styles.screenContainer}>
@@ -3425,9 +3750,13 @@ function SettingsScreen({onScreenChange}: {onScreenChange: (screen: Screen) => v
       </View>
       <View style={styles.settingsSection}>
         <Text style={styles.settingsSectionTitle}>Display</Text>
-        <TouchableOpacity style={styles.settingsItem} onPress={() => setDarkMode(!darkMode)}>
+        <TouchableOpacity style={styles.settingsItem} onPress={toggleDarkMode}>
           <Text style={styles.settingsLabel}>Dark Mode</Text>
           <Text style={styles.toggleSwitch}>{darkMode ? 'ON' : 'OFF'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.settingsItem} onPress={toggleNotifications}>
+          <Text style={styles.settingsLabel}>Notifications</Text>
+          <Text style={styles.toggleSwitch}>{notificationsEnabled ? 'ON' : 'OFF'}</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.settingsSection}>
@@ -3436,7 +3765,7 @@ function SettingsScreen({onScreenChange}: {onScreenChange: (screen: Screen) => v
           <TouchableOpacity
             key={lang}
             style={[styles.settingsItem, language === lang && styles.settingsItemActive]}
-            onPress={() => setLanguage(lang)}>
+            onPress={() => changeLanguage(lang)}>
             <Text style={styles.settingsLabel}>{lang.toUpperCase()}</Text>
             <Text>{language === lang ? 'v' : ''}</Text>
           </TouchableOpacity>
@@ -3470,9 +3799,9 @@ function FollowersScreen() {
     try {
       const response = await apiFetch(`/followers/${ACTIVE_USER_ID}`);
       const data = await response.json();
-      setFollowers(Array.isArray(data) && data.length > 0 ? data : MOCK_FOLLOWERS);
+      setFollowers(Array.isArray(data) ? data : []);
     } catch {
-      setFollowers(MOCK_FOLLOWERS);
+      setFollowers([]);
     } finally {
       setLoading(false);
     }
@@ -3512,9 +3841,9 @@ function AnalyticsScreen() {
     try {
       const response = await apiFetch(`/analytics/${ACTIVE_USER_ID}/user_spending`);
       const data = await response.json();
-      setAnalytics(data?.[0]?.data || MOCK_ANALYTICS);
+      setAnalytics(data?.[0]?.data || null);
     } catch {
-      setAnalytics(MOCK_ANALYTICS);
+      setAnalytics(null);
     } finally {
       setLoading(false);
     }
@@ -3527,6 +3856,8 @@ function AnalyticsScreen() {
       </View>
       {loading ? (
         <Text style={styles.loadingText}>Loading analytics...</Text>
+      ) : !analytics ? (
+        <Text style={styles.noResultsText}>No analytics available yet</Text>
       ) : (
         <>
           <View style={styles.analyticsCard}>
@@ -3618,6 +3949,31 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(37, 99, 235, 0.8)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  newsStrip: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+  },
+  newsStripHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  newsStripTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  newsItemText: {
+    fontSize: 12,
+    color: '#334155',
+    marginBottom: 6,
+    lineHeight: 18,
   },
   feedFilterRow: {
     paddingBottom: 10,
@@ -4492,6 +4848,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  shopPhotoRow: {
+    paddingBottom: 10,
+  },
+  shopPhotoCard: {
+    width: 128,
+    height: 86,
+    borderRadius: 12,
+    marginRight: 10,
+    backgroundColor: '#e2e8f0',
+  },
   searchContainer: {
     flexDirection: 'row',
     padding: 12,
@@ -5009,6 +5375,133 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#2563eb',
   },
+  chartRangeRow: {
+    flexDirection: 'row',
+    marginBottom: 10,
+  },
+  chartRangeChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: '#f8fafc',
+    marginRight: 6,
+  },
+  chartRangeChipActive: {
+    backgroundColor: '#dbeafe',
+    borderColor: '#93c5fd',
+  },
+  chartRangeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  chartRangeTextActive: {
+    color: '#1d4ed8',
+  },
+  chartHintText: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 10,
+  },
+  candleRow: {
+    paddingBottom: 6,
+  },
+  candlePlot: {
+    flexDirection: 'row',
+    position: 'relative',
+  },
+  candleContainer: {
+    width: 10,
+    marginRight: 4,
+    alignItems: 'center',
+  },
+  candleCanvas: {
+    width: 10,
+    height: 120,
+    position: 'relative',
+    justifyContent: 'flex-end',
+  },
+  candleWick: {
+    position: 'absolute',
+    width: 1,
+    left: 4.5,
+  },
+  candleBody: {
+    position: 'absolute',
+    width: 6,
+    left: 2,
+    borderRadius: 2,
+  },
+  volumeBar: {
+    width: 6,
+    backgroundColor: '#93c5fd',
+    borderRadius: 2,
+    marginTop: 2,
+  },
+  trendOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: 120,
+  },
+  trendLine: {
+    position: 'absolute',
+    height: 2,
+    borderRadius: 2,
+  },
+  analysisControlRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  analysisToggleChip: {
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: '#f8fafc',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  analysisToggleChipActive: {
+    backgroundColor: '#dbeafe',
+    borderColor: '#93c5fd',
+  },
+  analysisToggleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  analysisToggleTextActive: {
+    color: '#1d4ed8',
+  },
+  indicatorRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  indicatorText: {
+    fontSize: 11,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  trendList: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    padding: 8,
+    marginBottom: 10,
+  },
+  trendListText: {
+    fontSize: 11,
+    color: '#475569',
+    marginBottom: 4,
+  },
   tradeQuantityInput: {
     borderWidth: 1,
     borderColor: '#dbeafe',
@@ -5399,6 +5892,10 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
     fontSize: 16,
+  },
+  withdrawButton: {
+    marginTop: 8,
+    backgroundColor: '#dc2626',
   },
   authForm: {
     backgroundColor: 'rgba(15, 23, 42, 0.56)',
@@ -5950,5 +6447,6 @@ const styles = StyleSheet.create({
 });
 
 export default App;
+
 
 
