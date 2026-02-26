@@ -14,6 +14,7 @@ import {
   Text,
   Alert,
   ScrollView,
+  FlatList,
   TouchableOpacity,
   Image,
   TextInput,
@@ -31,9 +32,23 @@ import {
 } from 'react-native-safe-area-context';
 import MapScreen from './MapScreen';
 import MiniAppsScreen from './MiniAppsScreen';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {sessionStorage} from './utils/sessionStorage';
+import {MarketDataService} from './services/marketDataService';
+import Sparkline from './components/Sparkline';
+import {MarketRow} from './components/MarketRow';
+
+// Market data service instance
+let marketDataService: MarketDataService | null = null;
+
+let styles: any = {};
 
 const API_BASE =
   ((((globalThis as any)?.process?.env?.EXPO_PUBLIC_API_BASE_URL as string) || 'http://localhost:8000').trim() || 'http://localhost:8000').replace(/\/+$/, '');
+
+// Initialize market data service
+marketDataService = new MarketDataService(API_BASE);
+
 let ACCESS_TOKEN = '';
 let REFRESH_TOKEN = '';
 let ACTIVE_USER_ID = 1;
@@ -227,6 +242,160 @@ const buildEditableProfileState = (profile: User): EditableProfileState => ({
   language: profile.language,
   timezone: profile.timezone,
 });
+
+function createStyles(colors: any) {
+  const base: any = {};
+  Object.keys(defaultStyles).forEach(key => {
+    base[key] = StyleSheet.flatten((defaultStyles as any)[key]) || {};
+  });
+
+  // Apply theme-aware shadows by replacing shadow colors
+  const replaceShadowColor = (styleObj: any, newColor: string) => {
+    if (styleObj && typeof styleObj === 'object') {
+      if (styleObj.shadowColor) {
+        return {...styleObj, shadowColor: newColor};
+      }
+    }
+    return styleObj;
+  };
+
+  // Replace all shadow colors with theme-aware values
+  Object.keys(base).forEach(key => {
+    if (typeof base[key] === 'object') {
+      if (base[key].shadowColor === '#0f172a') {
+        base[key] = replaceShadowColor(base[key], colors.shadowLight);
+      } else if (base[key].shadowColor === '#60a5fa') {
+        base[key] = replaceShadowColor(base[key], colors.shadowBlue);
+      } else if (base[key].shadowColor === '#000') {
+        base[key] = replaceShadowColor(base[key], colors.shadowDark);
+      }
+    }
+  });
+
+  // Override color-related fields
+  base.container = {...base.container, backgroundColor: colors.bg};
+  base.screenContainer = {...base.screenContainer, backgroundColor: colors.screenBg};
+  base.header = {...base.header, borderBottomColor: colors.border};
+  base.loadingText = {...base.loadingText, color: colors.muted};
+
+  base.feedHero = {...base.feedHero, backgroundColor: colors.heroBg};
+  base.feedKicker = {...base.feedKicker, color: colors.accentLight};
+  base.feedTitle = {...base.feedTitle, color: colors.heroTitle};
+  base.feedSubtitle = {...base.feedSubtitle, color: colors.heroSubtitle};
+  base.feedHeroIcon = {...base.feedHeroIcon, backgroundColor: colors.heroIconBg};
+
+  base.newsStrip = {...base.newsStrip, backgroundColor: colors.surface, borderColor: colors.newsBorder};
+  base.newsStripTitle = {...base.newsStripTitle, color: colors.textPrimary};
+  base.newsItemText = {...base.newsItemText, color: colors.textSecondary};
+
+  base.feedFilterChip = {...base.feedFilterChip, backgroundColor: colors.chipBg};
+  base.feedFilterChipActive = {...base.feedFilterChipActive, backgroundColor: colors.accent};
+  base.feedFilterText = {...base.feedFilterText, color: colors.textSecondary};
+  base.feedFilterTextActive = {...base.feedFilterTextActive, color: colors.onAccent};
+
+  base.feedListTitle = {...base.feedListTitle, color: colors.textPrimary};
+  base.feedListMeta = {...base.feedListMeta, color: colors.muted};
+
+  base.feedDetailCard = {...base.feedDetailCard, backgroundColor: colors.surface, borderColor: colors.cardBorder};
+  base.feedDetailTitle = {...base.feedDetailTitle, color: colors.textPrimary};
+  base.feedDetailUser = {...base.feedDetailUser, color: colors.muted};
+  base.feedDetailContent = {...base.feedDetailContent, color: colors.textSecondary};
+  base.feedDetailMeta = {...base.feedDetailMeta, color: colors.muted};
+
+  base.feedEmptyCard = {...base.feedEmptyCard, backgroundColor: colors.inputBg, borderColor: colors.cardBorder};
+  base.feedEmptyTitle = {...base.feedEmptyTitle, color: colors.textPrimary};
+  base.feedEmptyText = {...base.feedEmptyText, color: colors.muted};
+
+  base.postCard = {...base.postCard, backgroundColor: colors.surface, borderColor: colors.cardBorder};
+  base.postAvatar = {...base.postAvatar, borderColor: colors.inputBorder};
+  base.postMenuButton = {...base.postMenuButton, backgroundColor: colors.actionBg};
+  base.postUsername = {...base.postUsername, color: colors.textPrimary};
+  base.postTime = {...base.postTime, color: colors.muted};
+  base.postContent = {...base.postContent, color: colors.textSecondary};
+  base.postActions = {...base.postActions, borderTopColor: colors.cardBorder};
+  base.actionButton = {...base.actionButton, backgroundColor: colors.actionBg};
+  base.actionText = {...base.actionText, color: colors.textSecondary};
+
+  base.commentInput = {...base.commentInput, backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.textPrimary};
+  base.commentSendButton = {...base.commentSendButton, backgroundColor: colors.accent};
+  base.commentPreviewText = {...base.commentPreviewText, color: colors.textSecondary};
+
+  base.chatHero = {...base.chatHero, backgroundColor: colors.heroBg};
+  base.chatHeroKicker = {...base.chatHeroKicker, color: colors.accentLight};
+  base.chatHeroTitle = {...base.chatHeroTitle, color: colors.heroTitle};
+  base.chatHeroSubtitle = {...base.chatHeroSubtitle, color: colors.heroSubtitle};
+  base.chatQuickButton = {...base.chatQuickButton, borderColor: colors.newsBorder, backgroundColor: colors.surface};
+  base.chatQuickText = {...base.chatQuickText, color: colors.accent};
+  base.chatSearchBox = {...base.chatSearchBox, borderColor: colors.inputBorder, backgroundColor: colors.surface};
+  base.chatSearchInput = {...base.chatSearchInput, color: colors.textPrimary};
+  base.chatUnreadChip = {...base.chatUnreadChip, borderColor: colors.inputBorder, backgroundColor: colors.surface};
+  base.chatUnreadText = {...base.chatUnreadText, color: colors.muted};
+  base.chatThreadCard = {...base.chatThreadCard, borderColor: colors.cardBorder, backgroundColor: colors.surface};
+  base.chatThreadName = {...base.chatThreadName, color: colors.textPrimary};
+  base.chatThreadMeta = {...base.chatThreadMeta, color: colors.muted};
+  base.chatThreadClose = {...base.chatThreadClose, borderColor: colors.inputBorder};
+  base.chatBubbleMine = {...base.chatBubbleMine, backgroundColor: colors.accent};
+  base.chatBubbleTheirs = {...base.chatBubbleTheirs, backgroundColor: colors.actionBg};
+  base.chatBubbleTextTheirs = {...base.chatBubbleTextTheirs, color: colors.textPrimary};
+  base.chatComposerInput = {...base.chatComposerInput, borderColor: colors.inputBorder, backgroundColor: colors.inputBg, color: colors.textPrimary};
+  base.chatComposerSend = {...base.chatComposerSend, backgroundColor: colors.accent};
+  base.chatItem = {...base.chatItem, borderColor: colors.cardBorder, backgroundColor: colors.surface};
+  base.chatName = {...base.chatName, color: colors.textPrimary};
+  base.chatPreview = {...base.chatPreview, color: colors.muted};
+  base.chatTime = {...base.chatTime, color: colors.muted};
+
+  base.storyUsername = {...base.storyUsername};
+  base.addStoryButton = {...base.addStoryButton, backgroundColor: colors.accent};
+  base.profileHeader = {...base.profileHeader, backgroundColor: colors.heroBg};
+  base.profileAvatar = {...base.profileAvatar, borderColor: colors.accentLight};
+  base.profileName = {...base.profileName, color: colors.heroTitle};
+  base.profileUsername = {...base.profileUsername, color: colors.heroSubtitle};
+  base.profileMeta = {...base.profileMeta, color: colors.heroSubtitle};
+  base.profileMetaSecondary = {...base.profileMetaSecondary, color: colors.muted};
+  base.profileBio = {...base.profileBio, color: colors.heroSubtitle};
+  base.statNumber = {...base.statNumber, color: colors.heroTitle};
+  base.statLabel = {...base.statLabel, color: colors.heroSubtitle};
+  base.profileSection = {...base.profileSection, borderColor: colors.cardBorder, backgroundColor: colors.surface};
+  base.sectionTitle = {...base.sectionTitle, color: colors.textPrimary};
+  base.profileDetailLabel = {...base.profileDetailLabel, color: colors.muted};
+  base.profileDetailValue = {...base.profileDetailValue, color: colors.textPrimary};
+  base.postPreview = {...base.postPreview, backgroundColor: colors.cardBorder};
+  base.postPreviewText = {...base.postPreviewText, color: colors.textPrimary};
+  base.profileTabBar = {...base.profileTabBar, backgroundColor: colors.cardBorder};
+  base.profileTabText = {...base.profileTabText, color: colors.muted};
+  base.profileTabTextActive = {...base.profileTabTextActive, color: colors.accent};
+  base.profileInsightCard = {...base.profileInsightCard, borderColor: colors.newsBorder, backgroundColor: colors.surface};
+  base.profileInsightValue = {...base.profileInsightValue, color: colors.textPrimary};
+  base.viewAllButton = {...base.viewAllButton, backgroundColor: colors.accent};
+  base.viewAllText = {...base.viewAllText};
+  base.profileActionButton = {...base.profileActionButton, borderColor: colors.inputBorder, backgroundColor: colors.actionBg};
+  base.profileActionText = {...base.profileActionText, color: colors.accent};
+  base.profileTimeline = {...base.profileTimeline, borderLeftColor: colors.newsBorder};
+  base.profileTimelineTitle = {...base.profileTimelineTitle, color: colors.textPrimary};
+  base.profileTimelineTime = {...base.profileTimelineTime, color: colors.muted};
+  base.profileCancelText = {...base.profileCancelText, color: colors.inputBorder};
+  base.profileInput = {...base.profileInput, backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.textPrimary};
+  base.profileInputHint = {...base.profileInputHint, color: colors.muted};
+  base.profileFieldLabel = {...base.profileFieldLabel, color: colors.textSecondary};
+
+  // Theme toggle button
+  base.themeToggle = {
+    position: 'absolute',
+    top: 12,
+    right: 14,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    zIndex: 40,
+  };
+
+  return StyleSheet.create(base);
+}
 
 const parseInterestTags = (value: string) =>
   value
@@ -548,6 +717,58 @@ function App() {
   // login/dark status for screens before user signs in
   const loginIsDark = useColorScheme() === 'dark';
 
+  // Theme: compute colors from system preference and create styles
+  const scheme = useColorScheme() || 'light';
+  const isDark = scheme === 'dark';
+  const lightColors = {
+    bg: '#ffffff',
+    screenBg: '#f1f5f9',
+    border: '#e0e0e0',
+    muted: '#64748b',
+    textPrimary: '#0f172a',
+    textSecondary: '#334155',
+    accent: '#2563eb',
+    accentLight: '#93c5fd',
+    surface: '#ffffff',
+    cardBorder: '#e2e8f0',
+    chipBg: '#e2e8f0',
+    onAccent: '#f8fbff',
+    inputBg: '#f8fafc',
+    inputBorder: '#dbeafe',
+    actionBg: '#f8fafc',
+    newsBorder: '#dbeafe',
+    heroBg: '#0f172a',
+    heroKicker: '#93c5fd',
+    heroTitle: '#f8fbff',
+    heroSubtitle: '#bfdbfe',
+    heroIconBg: 'rgba(37, 99, 235, 0.8)',
+  };
+  const darkColors = {
+    bg: '#030712',
+    screenBg: '#041026',
+    border: '#111827',
+    muted: '#9ca3af',
+    textPrimary: '#e6eef8',
+    textSecondary: '#cbd5e1',
+    accent: '#60a5fa',
+    accentLight: '#a5b4fc',
+    surface: '#071127',
+    cardBorder: '#1f2937',
+    chipBg: '#0b1220',
+    onAccent: '#0f172a',
+    inputBg: '#071127',
+    inputBorder: '#1f2937',
+    actionBg: '#071127',
+    newsBorder: '#0f1720',
+    heroBg: '#061022',
+    heroKicker: '#93c5fd',
+    heroTitle: '#f8fbff',
+    heroSubtitle: '#bfdbfe',
+    heroIconBg: 'rgba(96,165,250,0.2)',
+  };
+
+  styles = createStyles(isDark ? darkColors : lightColors);
+
   const [isLoading, setIsLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [accessToken, setAccessToken] = useState('');
@@ -601,6 +822,13 @@ function App() {
     ACTIVE_USER_ID = account.id;
     setActiveUser(mapAccountToUser(account));
     setIsLoggedIn(true);
+    // Save session with current tokens
+    if (accessToken && refreshToken) {
+      sessionStorage.saveSession(
+        {accessToken, refreshToken},
+        account.id
+      ).catch(err => console.error('Failed to save session:', err));
+    }
   };
 
   useEffect(() => {
@@ -670,6 +898,13 @@ function App() {
       const data = await response.json();
       const account = mapApiUserToAccount(data.user, password);
       upsertAccount(account);
+      
+      // Save session immediately after successful login
+      const tokens = {accessToken: data.access_token, refreshToken: data.refresh_token};
+      sessionStorage.saveSession(tokens, account.id).catch(err =>
+        console.error('Failed to save session:', err)
+      );
+      
       return {account, accessToken: data.access_token, refreshToken: data.refresh_token};
     } catch (error) {
       return {account: null, error: 'Unable to reach authentication service.'};
@@ -708,6 +943,13 @@ function App() {
       const data = await response.json();
       const account = mapApiUserToAccount(data.user, password);
       upsertAccount(account);
+      
+      // Save session immediately after successful signup
+      const tokens = {accessToken: data.access_token, refreshToken: data.refresh_token};
+      sessionStorage.saveSession(tokens, account.id).catch(err =>
+        console.error('Failed to save session:', err)
+      );
+      
       return {account, accessToken: data.access_token, refreshToken: data.refresh_token};
     } catch (error) {
       return {account: null, error: 'Unable to reach sign-up service.'};
@@ -715,10 +957,29 @@ function App() {
   };
 
   useEffect(() => {
-    // Simulate splash screen with 2 second delay
-    setTimeout(() => {
-      setIsLoading(false);
-    }, 2000);
+    const initializeApp = async () => {
+      // Try to restore session from storage
+      try {
+        const session = await sessionStorage.getSession();
+        if (session) {
+          // Restore tokens and auto-login
+          setAccessToken(session.accessToken);
+          setRefreshToken(session.refreshToken);
+          ACTIVE_USER_ID = session.userId;
+          setIsLoggedIn(true);
+          console.log('Session restored for user:', session.userId);
+        }
+      } catch (error) {
+        console.error('Failed to restore session:', error);
+      }
+      
+      // Simulate splash screen with 2 second delay
+      setTimeout(() => {
+        setIsLoading(false);
+      }, 2000);
+    };
+    
+    initializeApp();
   }, []);
 
   if (isLoading) {
@@ -756,6 +1017,10 @@ function App() {
           setRefreshToken('');
           setIsLoggedIn(false);
           setIsLoading(true);
+          // Clear stored session
+          sessionStorage.clearSession().catch(err => 
+            console.error('Failed to clear session:', err)
+          );
         }}
       />
     </SafeAreaProvider>
@@ -1279,6 +1544,32 @@ export function AppContent({currentUser, onLogout}: {currentUser: User; onLogout
   const [themeMode, setThemeMode] = useState<'System' | 'Light' | 'Dark'>('System');
   const isDarkMode = themeMode === 'System' ? colorScheme === 'dark' : themeMode === 'Dark';
 
+  // load/save persisted theme preference
+  useEffect(() => {
+    (async () => {
+      try {
+        const v = await AsyncStorage.getItem('theme_mode');
+        if (v === 'Light' || v === 'Dark' || v === 'System') {
+          setThemeMode(v as any);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await AsyncStorage.setItem('theme_mode', themeMode);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [themeMode]);
+
+  const cycleTheme = () => setThemeMode(prev => (prev === 'System' ? 'Light' : prev === 'Light' ? 'Dark' : 'System'));
+
   const [currentScreen, setCurrentScreen] = useState<Screen>('feed');
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -1294,6 +1585,10 @@ export function AppContent({currentUser, onLogout}: {currentUser: User; onLogout
     <>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
       <View style={styles.container}>
+      {/* Theme toggle */}
+      <TouchableOpacity style={styles.themeToggle} onPress={cycleTheme} accessibilityLabel="Toggle theme">
+        <MaterialCommunityIcons name={isDarkMode ? 'moon-waning-crescent' : 'white-balance-sunny'} size={20} color={isDarkMode ? '#fff' : '#0f172a'} />
+      </TouchableOpacity>
       {/* Content */}
       {currentScreen === 'feed' && <FeedScreen />}
       {currentScreen === 'chat' && <ChatScreen onOpenMiniApps={() => setCurrentScreen('mini-apps')} isDarkMode={isDarkMode} />}
@@ -1400,6 +1695,7 @@ export function AppContent({currentUser, onLogout}: {currentUser: User; onLogout
 function FeedScreen() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [newsItems, setNewsItems] = useState<NewsArticle[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState('For you');
   const [commentDrafts, setCommentDrafts] = useState<{[postId: number]: string}>({});
@@ -1412,6 +1708,7 @@ function FeedScreen() {
   useEffect(() => {
     fetchFeed();
     fetchNews();
+    fetchUsers();
   }, []);
 
   useEffect(() => {
@@ -1446,6 +1743,16 @@ function FeedScreen() {
       setNewsItems(Array.isArray(data?.items) ? data.items.slice(0, 5) : []);
     } catch {
       setNewsItems([]);
+    }
+  };
+
+  const fetchUsers = async () => {
+    try {
+      const response = await apiFetch(`/users`);
+      const data = await response.json();
+      setUsers(Array.isArray(data) ? data : []);
+    } catch {
+      setUsers([]);
     }
   };
 
@@ -1555,6 +1862,17 @@ function FeedScreen() {
           </TouchableOpacity>
         ))}
       </ScrollView>
+
+      {users.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{paddingVertical: 8}} contentContainerStyle={{paddingLeft: 12}}>
+          {users.map(u => (
+            <TouchableOpacity key={u.id} style={{alignItems: 'center', marginRight: 12}} onPress={() => {}}>
+              <Image source={{uri: u.avatar}} style={{width: 56, height: 56, borderRadius: 28}} />
+              <Text style={{fontSize: 12, color: '#374151', marginTop: 6}} numberOfLines={1}>{u.username}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
 
       <View style={styles.feedListHeader}>
         <Text style={styles.feedListTitle}>Latest Posts</Text>
@@ -2014,6 +2332,33 @@ function StocksScreen() {
     fetchStockChart(selectedStock.symbol, chartRange);
   }, [selectedStock, chartRange]);
 
+  // Subscribe to real-time market data updates
+  useEffect(() => {
+    if (!marketDataService) return;
+    
+    const unsubscribe = marketDataService.subscribe({
+      onUpdate: (updatedStocks: Stock[]) => {
+        if (updatedStocks && Array.isArray(updatedStocks)) {
+          setStocks(updatedStocks);
+          // If there was a selected stock, update it with new data
+          if (selectedStock) {
+            const updated = updatedStocks.find(s => s.id === selectedStock.id);
+            if (updated) {
+              setSelectedStock(updated);
+            }
+          }
+        }
+      },
+      onError: (error: string) => {
+        console.error('Market data error:', error);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedStock?.id]);
+
   const fetchStocks = async () => {
     try {
       const response = await apiFetch(`/stocks`);
@@ -2414,46 +2759,23 @@ function StocksScreen() {
               <Text style={styles.feedEmptyText}>Adjust search or watchlist filter.</Text>
             </View>
           ) : (
-            visibleStocks.map(stock => (
-              <TouchableOpacity key={stock.id} style={styles.stockCard} onPress={() => setSelectedStock(stock)}>
-                <View style={styles.stockHeader}>
-                  <View>
-                    <Text style={styles.stockSymbol}>{stock.symbol}</Text>
-                    <Text style={styles.stockName}>{stock.name}</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.marketWatchButton}
-                    onPress={() => toggleWatchlist(stock.symbol)}>
-                    <MaterialCommunityIcons
-                      name={watchlist[stock.symbol] ? 'star' : 'star-outline'}
-                      size={18}
-                      color={watchlist[stock.symbol] ? '#f59e0b' : '#64748b'}
-                    />
-                  </TouchableOpacity>
-                  <View style={styles.stockPriceContainer}>
-                    <Text style={styles.stockPrice}>${stock.price.toFixed(2)}</Text>
-                    <Text style={[styles.stockChange, {color: stock.change > 0 ? '#25D366' : '#FF3B30'} as any]}>
-                      {stock.change > 0 ? '+' : '-'} {Math.abs(stock.change)}%
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.stockDesc}>{stock.description}</Text>
-                <View style={styles.stockStats}>
-                  <View style={styles.statSmall}>
-                    <Text style={styles.statLabel}>Market Cap</Text>
-                    <Text style={styles.statValue}>{stock.market_cap}</Text>
-                  </View>
-                  <View style={styles.statSmall}>
-                    <Text style={styles.statLabel}>P/E Ratio</Text>
-                    <Text style={styles.statValue}>{stock.pe_ratio}</Text>
-                  </View>
-                  <View style={styles.statSmall}>
-                    <Text style={styles.statLabel}>Dividend</Text>
-                    <Text style={styles.statValue}>{stock.dividend_yield}%</Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            ))
+            <>
+              <View style={styles.marketListHeader}>
+                <Text style={styles.marketHeaderColName}>Name</Text>
+                <Text style={styles.marketHeaderColPrice}>Price</Text>
+                <Text style={styles.marketHeaderColChange}>24h</Text>
+                <Text style={styles.marketHeaderColCap}>Market Cap</Text>
+              </View>
+              {visibleStocks.map((stock, idx) => (
+                <MarketRow 
+                  key={stock.id}
+                  stock={stock}
+                  index={idx}
+                  onSelect={setSelectedStock}
+                  styles={styles}
+                />
+              ))}
+            </>
           )}
         </>
       )}
@@ -5003,7 +5325,7 @@ function AnalyticsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const defaultStyles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
@@ -7037,6 +7359,33 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f0f0f0',
     padding: 12,
   },
+  marketListHeader: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eef2ff',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8fafc',
+  },
+  marketHeaderColName: {flex: 0.6, fontSize: 12, fontWeight: '700', color: '#0f172a'},
+  marketHeaderColPrice: {flex: 0.2, fontSize: 12, fontWeight: '700', color: '#0f172a', textAlign: 'right'},
+  marketHeaderColChange: {flex: 0.15, fontSize: 12, fontWeight: '700', color: '#0f172a', textAlign: 'right'},
+  marketHeaderColCap: {flex: 0.4, fontSize: 12, fontWeight: '700', color: '#0f172a', textAlign: 'right'},
+  marketRow: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', backgroundColor: '#fff'},
+  marketLeft: {flex: 0.6, flexDirection: 'row', alignItems: 'center'},
+  marketRank: {width: 22, fontSize: 12, color: '#94a3b8', marginRight: 8, textAlign: 'center'},
+  marketLogo: {width: 36, height: 36, borderRadius: 18, marginRight: 8},
+  marketNameBlock: {flexDirection: 'column'},
+  marketName: {fontSize: 14, fontWeight: '700', color: '#0f172a'},
+  marketSymbol: {fontSize: 12, color: '#64748b'},
+  marketMiddle: {flex: 0.2, alignItems: 'flex-end'},
+  marketPrice: {fontSize: 14, fontWeight: '700', color: '#0f172a'},
+  marketChange: {fontSize: 12, marginTop: 4},
+  marketRight: {flex: 0.4, alignItems: 'flex-end'},
+  marketCap: {fontSize: 12, color: '#64748b'},
+  marketVolume: {fontSize: 12, color: '#94a3b8', marginTop: 4},
   stockHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

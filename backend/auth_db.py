@@ -7,7 +7,7 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 DB_PATH = Path(__file__).resolve().parent / "unihub_auth.db"
 
@@ -188,6 +188,20 @@ def authenticate_user(email: str, password: str) -> Optional[Dict[str, Any]]:
         return None
 
     return _public_user(row)
+
+
+def get_all_users() -> List[Dict[str, Any]]:
+    """Return a list of all public users stored in the auth database."""
+    with _get_conn() as conn:
+        rows = conn.execute("SELECT * FROM users").fetchall()
+
+    result: List[Dict[str, Any]] = []
+    for row in rows:
+        try:
+            result.append(_public_user(row))
+        except Exception:
+            continue
+    return result
 
 
 def save_refresh_token(token: str, user_id: int, expires_at: int) -> None:

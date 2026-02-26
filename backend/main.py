@@ -14,7 +14,7 @@ import urllib.request
 import json
 
 try:
-    from .auth_db import get_user_by_id, init_auth_db
+    from .auth_db import get_user_by_id, init_auth_db, get_all_users
     from .auth_routes import get_current_user, router as auth_router
     from .auth_tokens import decode_token
     from .state_db import get_state, init_state_db, seed_state, set_state
@@ -593,6 +593,21 @@ async def setup_auth_database() -> None:
     init_state_db()
     _hydrate_all_state()
     _remove_legacy_seeded_mock_data()
+
+    # Ensure registered users from the auth DB are present in the in-memory USERS
+    try:
+        auth_users = get_all_users()
+        for u in auth_users:
+            uid = int(u.get("id", 0) or 0)
+            if uid and uid not in USERS:
+                username = str(u.get("username") or f"user_{uid}")
+                full_name = str(u.get("full_name") or username)
+                avatar = f"https://ui-avatars.com/api/?name={urllib.parse.quote(full_name)}&background=2563eb&color=ffffff"
+                USERS[uid] = User(id=uid, username=username, name=full_name, avatar=avatar, bio="", followers=0, following=0)
+        _persist_state(STATE_KEYS["users"], USERS)
+    except Exception:
+        # non-fatal: preserve previous behavior if auth DB cannot be read
+        pass
 
 
 app.include_router(auth_router)
