@@ -22,6 +22,7 @@ import {
   Easing,
   Platform,
   useWindowDimensions,
+  Clipboard,
 } from 'react-native';
 import {MaterialCommunityIcons} from '@expo/vector-icons';
 import {
@@ -175,7 +176,138 @@ interface User {
   bio: string;
   followers: number;
   following: number;
+  email: string;
+  phone: string;
+  dateOfBirth: string;
+  gender: string;
+  pronouns: string;
+  location: string;
+  website: string;
+  company: string;
+  jobTitle: string;
+  interests: string[];
+  language: string;
+  timezone: string;
 }
+
+interface EditableProfileState {
+  name: string;
+  username: string;
+  avatar: string;
+  bio: string;
+  email: string;
+  phone: string;
+  dateOfBirth: string;
+  gender: string;
+  pronouns: string;
+  location: string;
+  website: string;
+  company: string;
+  jobTitle: string;
+  interests: string;
+  language: string;
+  timezone: string;
+}
+
+const buildEditableProfileState = (profile: User): EditableProfileState => ({
+  name: profile.name,
+  username: profile.username,
+  avatar: profile.avatar,
+  bio: profile.bio,
+  email: profile.email,
+  phone: profile.phone,
+  dateOfBirth: profile.dateOfBirth,
+  gender: profile.gender,
+  pronouns: profile.pronouns,
+  location: profile.location,
+  website: profile.website,
+  company: profile.company,
+  jobTitle: profile.jobTitle,
+  interests: profile.interests.join(', '),
+  language: profile.language,
+  timezone: profile.timezone,
+});
+
+const parseInterestTags = (value: string) =>
+  value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+
+const GENDER_OPTIONS = [
+  {label: 'Not specified', value: ''},
+  {label: 'Female', value: 'Female'},
+  {label: 'Male', value: 'Male'},
+  {label: 'Non-binary', value: 'Non-binary'},
+  {label: 'Prefer not to say', value: 'Prefer not to say'},
+];
+
+const PRONOUN_OPTIONS = [
+  {label: 'Not specified', value: ''},
+  {label: 'She/Her', value: 'She/Her'},
+  {label: 'He/Him', value: 'He/Him'},
+  {label: 'They/Them', value: 'They/Them'},
+  {label: 'Other', value: 'Other'},
+];
+
+const LANGUAGE_OPTIONS = [
+  {label: 'English', value: 'English'},
+  {label: 'Spanish', value: 'Spanish'},
+  {label: 'French', value: 'French'},
+  {label: 'German', value: 'German'},
+  {label: 'Portuguese', value: 'Portuguese'},
+];
+
+const TIMEZONE_OPTIONS = [
+  {label: 'Eastern (America/New_York)', value: 'America/New_York'},
+  {label: 'Central (America/Chicago)', value: 'America/Chicago'},
+  {label: 'Mountain (America/Denver)', value: 'America/Denver'},
+  {label: 'Pacific (America/Los_Angeles)', value: 'America/Los_Angeles'},
+  {label: 'Alaska (America/Anchorage)', value: 'America/Anchorage'},
+  {label: 'Hawaii (Pacific/Honolulu)', value: 'Pacific/Honolulu'},
+  {label: 'UTC', value: 'UTC'},
+];
+
+const MONTH_OPTIONS = [
+  {label: 'Jan', value: '01'},
+  {label: 'Feb', value: '02'},
+  {label: 'Mar', value: '03'},
+  {label: 'Apr', value: '04'},
+  {label: 'May', value: '05'},
+  {label: 'Jun', value: '06'},
+  {label: 'Jul', value: '07'},
+  {label: 'Aug', value: '08'},
+  {label: 'Sep', value: '09'},
+  {label: 'Oct', value: '10'},
+  {label: 'Nov', value: '11'},
+  {label: 'Dec', value: '12'},
+];
+
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = Array.from({length: 96}, (_, index) => {
+  const year = CURRENT_YEAR - index;
+  return {label: String(year), value: String(year)};
+});
+
+const parseBirthDateParts = (value: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) {
+    return {
+      year: '',
+      month: '',
+      day: '',
+    };
+  }
+
+  const year = match[1];
+  const monthNumber = Math.max(1, Math.min(Number(match[2]), 12));
+  const month = String(monthNumber).padStart(2, '0');
+  const day = match[3];
+  const maxDays = new Date(Number(year), monthNumber, 0).getDate();
+  const safeDay = String(Math.max(1, Math.min(Number(day), maxDays))).padStart(2, '0');
+
+  return {year, month, day: safeDay};
+};
 
 interface Post {
   id: number;
@@ -413,7 +545,9 @@ interface AuthActionResult {
 type Screen = 'feed' | 'chat' | 'stories' | 'profile' | 'shop' | 'cart' | 'orders' | 'stocks' | 'forex' | 'notifications' | 'search' | 'wishlist' | 'wallet' | 'crypto' | 'copy-trading' | 'loyalty' | 'settings' | 'followers' | 'analytics' | 'map' | 'mini-apps';
 
 function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+  // login/dark status for screens before user signs in
+  const loginIsDark = useColorScheme() === 'dark';
+
   const [isLoading, setIsLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [accessToken, setAccessToken] = useState('');
@@ -427,6 +561,18 @@ function App() {
     bio: '',
     followers: 0,
     following: 0,
+    email: '',
+    phone: '',
+    dateOfBirth: '',
+    gender: '',
+    pronouns: '',
+    location: '',
+    website: '',
+    company: '',
+    jobTitle: '',
+    interests: [],
+    language: 'English',
+    timezone: 'America/New_York',
   });
 
   const mapAccountToUser = (account: AuthAccount): User => ({
@@ -437,6 +583,18 @@ function App() {
     bio: account.provider ? `Signed in with ${account.provider}` : '',
     followers: 0,
     following: 0,
+    email: account.email,
+    phone: '',
+    dateOfBirth: '',
+    gender: '',
+    pronouns: '',
+    location: '',
+    website: '',
+    company: '',
+    jobTitle: '',
+    interests: ['social', 'trading'],
+    language: 'English',
+    timezone: 'America/New_York',
   });
 
   const handleLoginSuccess = (account: AuthAccount) => {
@@ -570,7 +728,7 @@ function App() {
   if (!isLoggedIn) {
     return (
       <SafeAreaProvider>
-        <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+        <StatusBar barStyle={loginIsDark ? 'light-content' : 'dark-content'} />
         <AuthenticationScreen
           onLoginSuccess={(account, tokens) => {
             if (tokens?.accessToken) {
@@ -591,7 +749,6 @@ function App() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
       <AppContent
         currentUser={activeUser}
         onLogout={() => {
@@ -1112,10 +1269,16 @@ function AuthenticationScreen({
   );
 }
 
-function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () => void}) {
+export function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () => void}) {
   const {width} = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const compactNav = width < 360;
+
+  // theme handling for the main application screens
+  const colorScheme = useColorScheme();
+  const [themeMode, setThemeMode] = useState<'System' | 'Light' | 'Dark'>('System');
+  const isDarkMode = themeMode === 'System' ? colorScheme === 'dark' : themeMode === 'Dark';
+
   const [currentScreen, setCurrentScreen] = useState<Screen>('feed');
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -1128,12 +1291,23 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
   }, [currentScreen, slideAnim]);
 
   return (
-    <View style={styles.container}>
+    <>
+      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+      <View style={styles.container}>
       {/* Content */}
       {currentScreen === 'feed' && <FeedScreen />}
-      {currentScreen === 'chat' && <ChatScreen onOpenMiniApps={() => setCurrentScreen('mini-apps')} />}
+      {currentScreen === 'chat' && <ChatScreen onOpenMiniApps={() => setCurrentScreen('mini-apps')} isDarkMode={isDarkMode} />}
       {currentScreen === 'stories' && <StoriesScreen />}
-      {currentScreen === 'profile' && <ProfileScreen user={currentUser} onLogout={onLogout} />}
+      {currentScreen === 'profile' && (
+        <ProfileScreen
+          user={currentUser}
+          onLogout={onLogout}
+          onNavigate={setCurrentScreen}
+          isDarkMode={isDarkMode}
+          themeMode={themeMode}
+          setThemeMode={setThemeMode}
+        />
+      )}
       {currentScreen === 'shop' && <ShoppingScreen onOpenMap={() => setCurrentScreen('map')} />}
       {currentScreen === 'cart' && <CartScreen />}
       {currentScreen === 'orders' && <OrdersScreen />}
@@ -1218,6 +1392,7 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
         </TouchableOpacity>
       </View>
     </View>
+    </>
   );
 }
 
@@ -1491,7 +1666,7 @@ function FeedScreen() {
 }
 
 // Chat Screen (WhatsApp style)
-function ChatScreen({onOpenMiniApps}: {onOpenMiniApps: () => void}) {
+function ChatScreen({onOpenMiniApps, isDarkMode}: {onOpenMiniApps: () => void; isDarkMode: boolean}) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1576,13 +1751,46 @@ function ChatScreen({onOpenMiniApps}: {onOpenMiniApps: () => void}) {
       )
     : [];
 
+  // dynamic color helpers for light/dark
+  const colors = {
+    heroBg: isDarkMode ? '#0f172a' : '#2563eb',
+    heroKicker: isDarkMode ? '#a5b4fc' : '#ffffff',
+    heroTitle: isDarkMode ? '#f8fbff' : '#ffffff',
+    heroSubtitle: isDarkMode ? '#c7d2fe' : '#e0e7ff',
+    quickButtonBg: isDarkMode ? '#1e293b' : '#eff6ff',
+    quickButtonBorder: isDarkMode ? '#475569' : '#bfdbfe',
+    quickText: '#2563eb',
+    searchBg: isDarkMode ? '#1e293b' : '#f1f5f9',
+    searchIcon: '#94a3b8',
+    searchText: isDarkMode ? '#ffffff' : '#000000',
+    name: isDarkMode ? '#ffffff' : '#000000',
+    preview: isDarkMode ? '#cbd5e1' : '#64748b',
+    time: isDarkMode ? '#94a3b8' : '#64748b',
+    bubbleMineBg: isDarkMode ? '#0f172a' : '#dcf8c6',
+    bubbleTheirsBg: isDarkMode ? '#1f2937' : '#ffffff',
+    bubbleTextMine: isDarkMode ? '#ffffff' : '#000000',
+    bubbleTextTheirs: isDarkMode ? '#ffffff' : '#000000',
+    composerBg: isDarkMode ? '#1e293b' : '#ffffff',
+    composerText: isDarkMode ? '#ffffff' : '#000000',
+    emptyTitle: isDarkMode ? '#ffffff' : '#000000',
+    emptyText: isDarkMode ? '#94a3b8' : '#64748b',
+  };
+
+  const emptyTitle = chatQuery ? 'No matching conversations' : 'No conversations yet';
+  const emptyText = chatQuery
+    ? 'Try a different search or filter.'
+    : 'Start a conversation by selecting a user from your contacts.';
+
   return (
-    <ScrollView style={styles.screenContainer} contentContainerStyle={styles.chatContent}>
-      <View style={styles.chatHero}>
+    <ScrollView
+      style={[styles.screenContainer, {backgroundColor: isDarkMode ? '#000' : '#f1f5f9'}]}
+      contentContainerStyle={styles.chatContent}
+      testID="chat-screen">
+      <View style={[styles.chatHero, {backgroundColor: colors.heroBg}]} testID="chat-hero">
         <View>
-          <Text style={styles.chatHeroKicker}>Messages</Text>
-          <Text style={styles.chatHeroTitle}>Stay Connected</Text>
-          <Text style={styles.chatHeroSubtitle}>Quickly reach your friends and communities</Text>
+          <Text style={[styles.chatHeroKicker, {color: colors.heroKicker}]}>Messages</Text>
+          <Text style={[styles.chatHeroTitle, {color: colors.heroTitle}]}>Stay Connected</Text>
+          <Text style={[styles.chatHeroSubtitle, {color: colors.heroSubtitle}]}>Quickly reach your friends and communities</Text>
         </View>
         <View style={styles.chatHeroIcon}>
           <MaterialCommunityIcons name="message-badge-outline" size={20} color="#f8fbff" />
@@ -1590,21 +1798,24 @@ function ChatScreen({onOpenMiniApps}: {onOpenMiniApps: () => void}) {
       </View>
 
       <View style={styles.chatQuickRow}>
-        <TouchableOpacity style={styles.chatQuickButton} onPress={onOpenMiniApps}>
-          <MaterialCommunityIcons name="view-grid-outline" size={16} color="#2563eb" />
+        <TouchableOpacity
+          style={[styles.chatQuickButton, {backgroundColor: colors.quickButtonBg, borderColor: colors.quickButtonBorder}]}
+          onPress={onOpenMiniApps}>
+          <MaterialCommunityIcons name="view-grid-outline" size={16} color={colors.quickText} />
           <Text style={styles.chatQuickText}>Open Mini Apps</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.chatControlRow}>
-        <View style={styles.chatSearchBox}>
-          <MaterialCommunityIcons name="magnify" size={16} color="#94a3b8" />
+        <View style={[styles.chatSearchBox, {backgroundColor: colors.searchBg}]}> 
+          <MaterialCommunityIcons name="magnify" size={16} color={colors.searchIcon} />
           <TextInput
-            style={styles.chatSearchInput}
+            style={[styles.chatSearchInput, {color: colors.searchText}]}
             placeholder="Search chats"
             placeholderTextColor="#94a3b8"
             value={chatQuery}
             onChangeText={setChatQuery}
+            testID="chat-search-input"
           />
         </View>
         <TouchableOpacity
@@ -1637,12 +1848,12 @@ function ChatScreen({onOpenMiniApps}: {onOpenMiniApps: () => void}) {
                 key={message.id}
                 style={[
                   styles.chatBubble,
-                  message.sender_id === ACTIVE_USER_ID ? styles.chatBubbleMine : styles.chatBubbleTheirs,
+                  {backgroundColor: message.sender_id === ACTIVE_USER_ID ? colors.bubbleMineBg : colors.bubbleTheirsBg},
                 ]}>
                 <Text
                   style={[
                     styles.chatBubbleText,
-                    message.sender_id === ACTIVE_USER_ID ? styles.chatBubbleTextMine : styles.chatBubbleTextTheirs,
+                    {color: message.sender_id === ACTIVE_USER_ID ? colors.bubbleTextMine : colors.bubbleTextTheirs},
                   ]}>
                   {message.content}
                 </Text>
@@ -1653,14 +1864,15 @@ function ChatScreen({onOpenMiniApps}: {onOpenMiniApps: () => void}) {
 
           <View style={styles.chatComposerRow}>
             <TextInput
-              style={styles.chatComposerInput}
+              style={[styles.chatComposerInput, {backgroundColor: colors.composerBg, color: colors.composerText}]}
               placeholder="Type your message"
               placeholderTextColor="#94a3b8"
               value={chatDraft}
               onChangeText={setChatDraft}
               onSubmitEditing={sendMessage}
+              testID="chat-composer"
             />
-            <TouchableOpacity style={styles.chatComposerSend} onPress={sendMessage}>
+            <TouchableOpacity style={styles.chatComposerSend} onPress={sendMessage} testID="chat-send-button">
               <MaterialCommunityIcons name="send" size={14} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -1675,19 +1887,19 @@ function ChatScreen({onOpenMiniApps}: {onOpenMiniApps: () => void}) {
       ) : filteredConversations.length === 0 ? (
         <View style={styles.feedEmptyCard}>
           <MaterialCommunityIcons name="chat-processing-outline" size={26} color="#94a3b8" />
-          <Text style={styles.feedEmptyTitle}>No matching conversations</Text>
-          <Text style={styles.feedEmptyText}>Try a different search or filter.</Text>
+          <Text style={[styles.feedEmptyTitle, {color: colors.emptyTitle}]}>{emptyTitle}</Text>
+          <Text style={[styles.feedEmptyText, {color: colors.emptyText}]}>{emptyText}</Text>
         </View>
       ) : (
         filteredConversations.map(conv => (
           <TouchableOpacity key={conv.user_id} style={styles.chatItem} onPress={() => openConversation(conv)}>
             <Image source={{uri: conv.user?.avatar || 'https://ui-avatars.com/api/?name=User&background=94a3b8&color=ffffff'}} style={styles.chatAvatar} />
             <View style={styles.chatInfo}>
-              <Text style={styles.chatName}>{conv.user?.name || conv.user?.username || `User ${conv.user_id}`}</Text>
-              <Text style={styles.chatPreview}>{conv.last_message}</Text>
+              <Text style={[styles.chatName, {color: colors.name}]}>{conv.user?.name || conv.user?.username || `User ${conv.user_id}`}</Text>
+              <Text style={[styles.chatPreview, {color: colors.preview}]}>{conv.last_message}</Text>
             </View>
             <View style={styles.chatMeta}>
-              <Text style={styles.chatTime}>{conv.timestamp}</Text>
+              <Text style={[styles.chatTime, {color: colors.time}]}>{conv.timestamp}</Text>
               {conv.unread && <View style={styles.unreadBadge} />}
             </View>
           </TouchableOpacity>
@@ -2348,25 +2560,68 @@ function ForexScreen() {
 }
 
 // Profile Screen
-function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void }) {
+function ProfileScreen({
+  user,
+  onLogout,
+  onNavigate,
+  isDarkMode,
+  themeMode,
+  setThemeMode,
+}: {
+  user: User;
+  onLogout: () => void;
+  onNavigate: (screen: Screen) => void;
+  isDarkMode: boolean;
+  themeMode: 'System' | 'Light' | 'Dark';
+  setThemeMode: (mode: 'System' | 'Light' | 'Dark') => void;
+}) {
+  const profileHeaderBg = isDarkMode ? '#1e293b' : '#0f172a';
+  const profileTabBarBg = isDarkMode ? '#334155' : '#e2e8f0';
+  const profileSectionBg = isDarkMode ? '#18202c' : '#ffffff';
+
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
-  const [activeTab, setActiveTab] = useState<'overview' | 'activity' | 'highlights'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'menu' | 'activity' | 'highlights'>('overview');
   const [profileData, setProfileData] = useState<User>(user);
   const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState(user.name);
-  const [editBio, setEditBio] = useState(user.bio);
+  const [editProfile, setEditProfile] = useState<EditableProfileState>(() => buildEditableProfileState(user));
   const [newPostText, setNewPostText] = useState('');
   const [recentPosts, setRecentPosts] = useState<{id: number; title: string; createdAt: string}[]>([]);
   const [shareCount, setShareCount] = useState(0);
   const [streakDays, setStreakDays] = useState(0);
   const [statusMode, setStatusMode] = useState<'Online' | 'Focus' | 'Away'>('Online');
   const [activityTimeline, setActivityTimeline] = useState<{id: number; title: string; time: string; icon: string}[]>([]);
+  const [notificationPrefs, setNotificationPrefs] = useState({
+    push: true,
+    email: true,
+    sms: false,
+    marketing: false,
+    security: true,
+  });
+  const [privacyVisibility, setPrivacyVisibility] = useState<'Public' | 'Followers' | 'Private'>('Public');
+  const [showActivityStatus, setShowActivityStatus] = useState(true);
+  const [allowEmailLookup, setAllowEmailLookup] = useState(true);
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [activeSessions, setActiveSessions] = useState(2);
+  const [connectedAccounts, setConnectedAccounts] = useState({
+    google: true,
+    apple: false,
+    telegram: false,
+    facebook: false,
+  });
+  const [openEditDropdown, setOpenEditDropdown] = useState<
+    null | 'gender' | 'pronouns' | 'language' | 'timezone' | 'birthMonth' | 'birthDay' | 'birthYear'
+  >(null);
 
   useEffect(() => {
     setProfileData(user);
-    setEditName(user.name);
-    setEditBio(user.bio);
+    setEditProfile(buildEditableProfileState(user));
   }, [user]);
+
+  useEffect(() => {
+    if (!isEditing || activeTab !== 'overview') {
+      setOpenEditDropdown(null);
+    }
+  }, [activeTab, isEditing]);
 
   const addActivity = (title: string, icon: string) => {
     const newEvent = {
@@ -2378,27 +2633,379 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
     setActivityTimeline(prev => [newEvent, ...prev]);
   };
 
+  const updateEditProfile = (field: keyof EditableProfileState, value: string) => {
+    setEditProfile(prev => ({...prev, [field]: value}));
+  };
+
+  const birthDateParts = parseBirthDateParts(editProfile.dateOfBirth);
+  const selectedYearForDays = Number(birthDateParts.year || String(CURRENT_YEAR - 18));
+  const selectedMonthForDays = Number(birthDateParts.month || '01');
+  const daysInSelectedMonth = new Date(
+    selectedYearForDays,
+    selectedMonthForDays,
+    0
+  ).getDate();
+  const dayOptions = Array.from({length: daysInSelectedMonth}, (_, index) => {
+    const day = String(index + 1).padStart(2, '0');
+    return {label: String(index + 1), value: day};
+  });
+
+  const updateBirthDatePart = (part: 'year' | 'month' | 'day', value: string) => {
+    const next = {
+      year: birthDateParts.year || String(CURRENT_YEAR - 18),
+      month: birthDateParts.month || '01',
+      day: birthDateParts.day || '01',
+      [part]: value,
+    };
+    const maxDays = new Date(Number(next.year), Number(next.month), 0).getDate();
+    const safeDay = String(Math.max(1, Math.min(Number(next.day), maxDays))).padStart(2, '0');
+    updateEditProfile('dateOfBirth', `${next.year}-${next.month}-${safeDay}`);
+  };
+
+  const formatDropdownValue = (
+    value: string,
+    options: Array<{label: string; value: string}>,
+    fallback: string
+  ) => {
+    const selected = options.find(option => option.value === value);
+    return selected?.label || value || fallback;
+  };
+
+  const renderEditDropdown = (
+    key: 'gender' | 'pronouns' | 'language' | 'timezone',
+    label: string,
+    value: string,
+    options: Array<{label: string; value: string}>,
+    onSelect: (nextValue: string) => void
+  ) => (
+    <View style={styles.profileDropdownBlock}>
+      <Text style={styles.profileFieldLabel}>{label}</Text>
+      <TouchableOpacity
+        style={styles.profileDropdownTrigger}
+        onPress={() => setOpenEditDropdown(prev => (prev === key ? null : key))}>
+        <Text
+          style={[
+            styles.profileDropdownTriggerText,
+            !value && styles.profileDropdownTriggerTextPlaceholder,
+          ]}>
+          {formatDropdownValue(value, options, `Select ${label.toLowerCase()}`)}
+        </Text>
+        <MaterialCommunityIcons
+          name={openEditDropdown === key ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color="#64748b"
+        />
+      </TouchableOpacity>
+      {openEditDropdown === key && (
+        <View style={styles.profileDropdownMenu}>
+          <ScrollView
+            nestedScrollEnabled
+            style={styles.profileDropdownMenuScroll}
+            contentContainerStyle={styles.profileDropdownMenuContent}>
+            {options.map(option => (
+              <TouchableOpacity
+                key={`${key}-${option.value || 'empty'}`}
+                style={[
+                  styles.profileDropdownItem,
+                  value === option.value && styles.profileDropdownItemActive,
+                ]}
+                onPress={() => {
+                  onSelect(option.value);
+                  setOpenEditDropdown(null);
+                }}>
+                <Text
+                  style={[
+                    styles.profileDropdownItemText,
+                    value === option.value && styles.profileDropdownItemTextActive,
+                  ]}>
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+
+  const renderDatePartDropdown = (
+    key: 'birthMonth' | 'birthDay' | 'birthYear',
+    label: string,
+    value: string,
+    options: Array<{label: string; value: string}>,
+    onSelect: (nextValue: string) => void
+  ) => (
+    <View style={styles.profileDateDropdownColumn}>
+      <Text style={styles.profileFieldLabel}>{label}</Text>
+      <TouchableOpacity
+        style={styles.profileDateDropdownTrigger}
+        onPress={() => setOpenEditDropdown(prev => (prev === key ? null : key))}>
+        <Text style={styles.profileDateDropdownText}>
+          {formatDropdownValue(value, options, label)}
+        </Text>
+        <MaterialCommunityIcons
+          name={openEditDropdown === key ? 'chevron-up' : 'chevron-down'}
+          size={16}
+          color="#64748b"
+        />
+      </TouchableOpacity>
+      {openEditDropdown === key && (
+        <View style={styles.profileDateDropdownMenu}>
+          <ScrollView
+            nestedScrollEnabled
+            style={styles.profileDateDropdownMenuScroll}
+            contentContainerStyle={styles.profileDropdownMenuContent}>
+            {options.map(option => (
+              <TouchableOpacity
+                key={`${key}-${option.value}`}
+                style={[
+                  styles.profileDropdownItem,
+                  value === option.value && styles.profileDropdownItemActive,
+                ]}
+                onPress={() => {
+                  onSelect(option.value);
+                  setOpenEditDropdown(null);
+                }}>
+                <Text
+                  style={[
+                    styles.profileDropdownItemText,
+                    value === option.value && styles.profileDropdownItemTextActive,
+                  ]}>
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+
   const profileStats = [
     {label: 'Followers', value: profileData.followers.toLocaleString(), icon: 'account-group-outline'},
     {label: 'Following', value: profileData.following.toLocaleString(), icon: 'account-heart-outline'},
     {label: 'Engagement', value: `${Math.max(6, Math.min(18, recentPosts.length * 2.3)).toFixed(1)}%`, icon: 'trending-up'},
   ];
 
+  const profileDetails = [
+    {label: 'Email', value: profileData.email || 'Not set'},
+    {label: 'Phone', value: profileData.phone || 'Not set'},
+    {label: 'Date of Birth', value: profileData.dateOfBirth || 'Not set'},
+    {label: 'Gender', value: profileData.gender || 'Not set'},
+    {label: 'Pronouns', value: profileData.pronouns || 'Not set'},
+    {label: 'Location', value: profileData.location || 'Not set'},
+    {label: 'Website', value: profileData.website || 'Not set'},
+    {label: 'Company', value: profileData.company || 'Not set'},
+    {label: 'Job Title', value: profileData.jobTitle || 'Not set'},
+    {
+      label: 'Interests',
+      value: profileData.interests.length > 0 ? profileData.interests.join(', ') : 'Not set',
+    },
+    {label: 'Language', value: profileData.language || 'Not set'},
+    {label: 'Timezone', value: profileData.timezone || 'Not set'},
+  ];
+
+  const handleStatPress = (label: string) => {
+    Alert.alert(label, `You tapped on ${label}.`);
+  };
+
+  const handleInsightPress = (label: string) => {
+    Alert.alert(label, 'Details coming soon.');
+  };
+
+  const handleViewAllPosts = () => {
+    if (recentPosts.length === 0) {
+      Alert.alert('No posts', "You haven't posted yet.");
+      return;
+    }
+    const list = recentPosts.map(p => `- ${p.title} (${p.createdAt})`).join('\n');
+    Alert.alert('All Posts', list);
+  };
+
   const handleSaveProfile = () => {
-    if (!editName.trim() || !editBio.trim()) {
-      Alert.alert('Missing fields', 'Name and bio are required.');
+    const normalizedName = editProfile.name.trim();
+    const normalizedUsername = editProfile.username.trim().toLowerCase().replace(/\s+/g, '_');
+    const normalizedBio = editProfile.bio.trim();
+    const normalizedEmail = editProfile.email.trim().toLowerCase();
+    const normalizedBirthDate = editProfile.dateOfBirth.trim();
+    const parsedBirthDate = parseBirthDateParts(normalizedBirthDate);
+
+    if (!normalizedName || !normalizedUsername || !normalizedBio || !normalizedEmail) {
+      Alert.alert('Missing fields', 'Name, username, bio, and email are required.');
       return;
     }
 
-    setProfileData(prev => ({
-      ...prev,
-      name: editName.trim(),
-      bio: editBio.trim(),
-    }));
+    if (!/^[a-z0-9._]{3,20}$/.test(normalizedUsername)) {
+      Alert.alert('Invalid username', 'Use 3-20 characters: lowercase letters, numbers, dot, underscore.');
+      return;
+    }
+
+    if (!/\S+@\S+\.\S+/.test(normalizedEmail)) {
+      Alert.alert('Invalid email', 'Enter a valid email address.');
+      return;
+    }
+
+    if (normalizedBirthDate && (!parsedBirthDate.year || !parsedBirthDate.month || !parsedBirthDate.day)) {
+      Alert.alert('Invalid birth date', 'Choose a valid date from the dropdowns.');
+      return;
+    }
+
+    const nextProfile: User = {
+      ...profileData,
+      name: normalizedName,
+      username: normalizedUsername,
+      avatar: editProfile.avatar.trim() || profileData.avatar,
+      bio: normalizedBio,
+      email: normalizedEmail,
+      phone: editProfile.phone.trim(),
+      dateOfBirth: normalizedBirthDate
+        ? `${parsedBirthDate.year}-${parsedBirthDate.month}-${parsedBirthDate.day}`
+        : '',
+      gender: editProfile.gender.trim(),
+      pronouns: editProfile.pronouns.trim(),
+      location: editProfile.location.trim(),
+      website: editProfile.website.trim(),
+      company: editProfile.company.trim(),
+      jobTitle: editProfile.jobTitle.trim(),
+      interests: parseInterestTags(editProfile.interests),
+      language: editProfile.language.trim() || 'English',
+      timezone: editProfile.timezone.trim() || 'America/New_York',
+    };
+
+    setProfileData(nextProfile);
+    setEditProfile(buildEditableProfileState(nextProfile));
     setIsEditing(false);
+    setOpenEditDropdown(null);
     addActivity('Updated profile information', 'account-edit-outline');
     Alert.alert('Profile updated', 'Your profile details were saved.');
   };
+
+  const handleCancelEditing = () => {
+    setIsEditing(false);
+    setOpenEditDropdown(null);
+    setEditProfile(buildEditableProfileState(profileData));
+  };
+
+  const handleRefreshAvatar = () => {
+    const baseName = (editProfile.name || profileData.name || profileData.username || 'User').trim();
+    const nextAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(
+      baseName
+    )}&background=1d4ed8&color=ffffff&bold=true&v=${Date.now()}`;
+    setProfileData(prev => ({...prev, avatar: nextAvatar}));
+    setEditProfile(prev => ({...prev, avatar: nextAvatar}));
+    addActivity('Updated profile photo', 'camera-outline');
+    Alert.alert('Photo updated', 'Your profile photo has been refreshed.');
+  };
+
+  const handleMenuAction = (title: string, message: string, icon = 'cog-outline') => {
+    addActivity(title, icon);
+    Alert.alert(title, message);
+  };
+
+  const cyclePrivacyVisibility = () => {
+    const options: Array<'Public' | 'Followers' | 'Private'> = ['Public', 'Followers', 'Private'];
+    const nextIndex = (options.indexOf(privacyVisibility) + 1) % options.length;
+    const nextValue = options[nextIndex];
+    setPrivacyVisibility(nextValue);
+    addActivity(`Set profile visibility to ${nextValue}`, 'eye-outline');
+  };
+
+  const toggleNotification = (key: keyof typeof notificationPrefs, label: string) => {
+    setNotificationPrefs(prev => {
+      const nextValue = !prev[key];
+      addActivity(`${nextValue ? 'Enabled' : 'Disabled'} ${label} notifications`, 'bell-outline');
+      return {...prev, [key]: nextValue};
+    });
+  };
+
+  const toggleConnectedAccount = (key: keyof typeof connectedAccounts, provider: string) => {
+    setConnectedAccounts(prev => {
+      const nextValue = !prev[key];
+      addActivity(`${nextValue ? 'Connected' : 'Disconnected'} ${provider} account`, 'link-variant');
+      return {...prev, [key]: nextValue};
+    });
+  };
+
+  const handleSignOutOtherSessions = () => {
+    setActiveSessions(1);
+    addActivity('Signed out from other sessions', 'devices');
+    Alert.alert('Sessions updated', 'Signed out from other active devices.');
+  };
+
+  const handleDeactivateAccount = () => {
+    Alert.alert('Deactivate account', 'Your account will be hidden until you sign in again.', [
+      {text: 'Cancel', style: 'cancel'},
+      {
+        text: 'Deactivate',
+        style: 'destructive',
+        onPress: () => {
+          addActivity('Requested account deactivation', 'account-off-outline');
+          Alert.alert('Account deactivated', 'You can reactivate by signing in again.');
+        },
+      },
+    ]);
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert('Delete account', 'This permanently removes profile data from this app demo. Continue?', [
+      {text: 'Cancel', style: 'cancel'},
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          addActivity('Requested account deletion', 'delete-outline');
+          Alert.alert('Deletion requested', 'Account deletion flow started.');
+        },
+      },
+    ]);
+  };
+
+  const renderMenuRow = (
+    icon: string,
+    title: string,
+    description: string,
+    onPress: () => void,
+    value?: string,
+    danger = false
+  ) => (
+    <TouchableOpacity
+      style={[styles.profileMenuRow, danger && styles.profileMenuRowDanger]}
+      onPress={onPress}>
+      <View style={styles.profileMenuRowIcon}>
+        <MaterialCommunityIcons name={icon as any} size={18} color={danger ? '#dc2626' : '#2563eb'} />
+      </View>
+      <View style={styles.profileMenuRowBody}>
+        <Text style={[styles.profileMenuRowTitle, danger && styles.profileMenuRowTitleDanger]}>
+          {title}
+        </Text>
+        <Text style={styles.profileMenuRowDescription}>{description}</Text>
+      </View>
+      {value ? <Text style={styles.profileMenuRowValue}>{value}</Text> : null}
+      <MaterialCommunityIcons name="chevron-right" size={18} color="#94a3b8" />
+    </TouchableOpacity>
+  );
+
+  const renderToggleRow = (
+    title: string,
+    description: string,
+    enabled: boolean,
+    onToggle: () => void
+  ) => (
+    <View style={styles.profileToggleRow}>
+      <View style={styles.profileToggleTextWrap}>
+        <Text style={styles.profileToggleTitle}>{title}</Text>
+        <Text style={styles.profileToggleDescription}>{description}</Text>
+      </View>
+      <TouchableOpacity
+        style={[styles.profileToggleButton, enabled && styles.profileToggleButtonActive]}
+        onPress={onToggle}>
+        <Text
+          style={[styles.profileToggleButtonText, enabled && styles.profileToggleButtonTextActive]}>
+          {enabled ? 'On' : 'Off'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   const handleCreatePost = async () => {
     if (!newPostText.trim()) {
@@ -2437,14 +3044,17 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
 
   const handleInvite = () => {
     const inviteCode = `${profileData.username.toUpperCase()}-${String(Date.now()).slice(-4)}`;
+    Clipboard.setString(inviteCode);
     addActivity('Generated invite code', 'account-plus-outline');
-    Alert.alert('Invite Link', `Share this code with friends: ${inviteCode}`);
+    Alert.alert('Invite Code', `Share this code with friends: ${inviteCode}\n(It was also copied to your clipboard.)`);
   };
 
   const handleShareProfile = (provider: string) => {
+    const shareLink = `${API_BASE}/profile/${profileData.username}`;
+    Clipboard.setString(shareLink);
     setShareCount(prev => prev + 1);
     addActivity(`Shared profile on ${provider}`, 'share-variant-outline');
-    Alert.alert('Shared', `Profile shared to ${provider}.`);
+    Alert.alert('Shared', `Profile shared to ${provider}. Link copied to clipboard.`);
   };
 
   const handleOpenPost = (post: {title: string; createdAt: string}) => {
@@ -2472,19 +3082,33 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
 
   return (
     <ScrollView style={styles.screenContainer}>
-      <Animated.View style={[styles.profileHeader, {transform: [{scale: scaleAnim}]}]}>
-        <Image source={{uri: profileData.avatar}} style={styles.profileAvatar} />
+      <Animated.View testID="profile-header" style={[styles.profileHeader, {backgroundColor: profileHeaderBg}, {transform: [{scale: scaleAnim}]}]}>
+        <TouchableOpacity style={styles.profileAvatarWrap} onPress={handleRefreshAvatar}>
+          <Image source={{uri: profileData.avatar}} style={styles.profileAvatar} />
+          <View style={styles.profileAvatarBadge}>
+            <MaterialCommunityIcons name="camera-outline" size={14} color="#fff" />
+          </View>
+        </TouchableOpacity>
         <Text style={styles.profileName}>{profileData.name}</Text>
         <Text style={styles.profileUsername}>@{profileData.username}</Text>
+        <Text style={styles.profileMeta}>
+          {profileData.email || 'Add email'} | {profileData.location || 'Add location'}
+        </Text>
+        <Text style={styles.profileMetaSecondary}>
+          {profileData.language} | {profileData.timezone}
+        </Text>
         <Text style={styles.profileBio}>{profileData.bio}</Text>
 
         <View style={styles.statsContainer}>
           {profileStats.map(item => (
-            <View key={item.label} style={styles.statItem}>
+            <TouchableOpacity
+              key={item.label}
+              style={styles.statItem}
+              onPress={() => handleStatPress(item.label)}>
               <MaterialCommunityIcons name={item.icon as any} size={16} color="#93c5fd" />
               <Text style={styles.statNumber}>{item.value}</Text>
               <Text style={styles.statLabel}>{item.label}</Text>
-            </View>
+            </TouchableOpacity>
           ))}
         </View>
 
@@ -2502,29 +3126,30 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
             <TouchableOpacity style={styles.profileSaveButton} onPress={handleSaveProfile}>
               <Text style={styles.profileSaveText}>Save</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.profileCancelButton}
-              onPress={() => {
-                setIsEditing(false);
-                setEditName(profileData.name);
-                setEditBio(profileData.bio);
-              }}>
+            <TouchableOpacity style={styles.profileCancelButton} onPress={handleCancelEditing}>
               <Text style={styles.profileCancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         )}
       </Animated.View>
 
-      <View style={styles.profileTabBar}>
+      <View style={[styles.profileTabBar, {backgroundColor: profileTabBarBg}]}>  
         {[
-          {key: 'overview', label: 'Overview'},
-          {key: 'activity', label: 'Activity'},
-          {key: 'highlights', label: 'Highlights'},
+          {key: 'overview', label: 'Overview', icon: 'account'},
+          {key: 'menu', label: 'Menu', icon: 'menu'},
+          {key: 'activity', label: 'Activity', icon: 'history'},
+          {key: 'highlights', label: 'Highlights', icon: 'star-circle-outline'},
         ].map(tab => (
           <TouchableOpacity
             key={tab.key}
             style={[styles.profileTabButton, activeTab === tab.key && styles.profileTabButtonActive]}
-            onPress={() => setActiveTab(tab.key as 'overview' | 'activity' | 'highlights')}>
+            onPress={() => setActiveTab(tab.key as 'overview' | 'menu' | 'activity' | 'highlights')}>
+            <MaterialCommunityIcons
+              name={tab.icon as any}
+              size={14}
+              color={activeTab === tab.key ? '#2563eb' : '#64748b'}
+              style={{marginRight: 4}}
+            />
             <Text style={[styles.profileTabText, activeTab === tab.key && styles.profileTabTextActive]}>
               {tab.label}
             </Text>
@@ -2535,58 +3160,232 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
       {activeTab === 'overview' && (
         <>
           {isEditing && (
-            <View style={styles.profileSection}>
+            <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
               <Text style={styles.sectionTitle}>Edit Profile</Text>
               <TextInput
                 style={styles.profileInput}
-                placeholder="Name"
+                placeholder="Full name"
                 placeholderTextColor="#94a3b8"
-                value={editName}
-                onChangeText={setEditName}
+                value={editProfile.name}
+                onChangeText={value => updateEditProfile('name', value)}
+              />
+              <TextInput
+                style={styles.profileInput}
+                placeholder="Username"
+                placeholderTextColor="#94a3b8"
+                autoCapitalize="none"
+                value={editProfile.username}
+                onChangeText={value => updateEditProfile('username', value)}
+              />
+              <TextInput
+                style={styles.profileInput}
+                placeholder="Email"
+                placeholderTextColor="#94a3b8"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={editProfile.email}
+                onChangeText={value => updateEditProfile('email', value)}
+              />
+              <TextInput
+                style={styles.profileInput}
+                placeholder="Phone number"
+                placeholderTextColor="#94a3b8"
+                keyboardType="phone-pad"
+                value={editProfile.phone}
+                onChangeText={value => updateEditProfile('phone', value)}
               />
               <TextInput
                 style={[styles.profileInput, styles.profileInputMultiline]}
                 placeholder="Bio"
                 placeholderTextColor="#94a3b8"
-                value={editBio}
-                onChangeText={setEditBio}
+                value={editProfile.bio}
+                onChangeText={value => updateEditProfile('bio', value)}
                 multiline
               />
+              <TextInput
+                style={styles.profileInput}
+                placeholder="Profile photo URL"
+                placeholderTextColor="#94a3b8"
+                autoCapitalize="none"
+                value={editProfile.avatar}
+                onChangeText={value => updateEditProfile('avatar', value)}
+              />
+              <View style={styles.profileDatePickerBlock}>
+                <Text style={styles.profileFieldLabel}>Date of Birth</Text>
+                <View style={styles.profileDatePickerRow}>
+                  {renderDatePartDropdown('birthMonth', 'Month', birthDateParts.month, MONTH_OPTIONS, value =>
+                    updateBirthDatePart('month', value)
+                  )}
+                  {renderDatePartDropdown('birthDay', 'Day', birthDateParts.day, dayOptions, value =>
+                    updateBirthDatePart('day', value)
+                  )}
+                  {renderDatePartDropdown('birthYear', 'Year', birthDateParts.year, YEAR_OPTIONS, value =>
+                    updateBirthDatePart('year', value)
+                  )}
+                </View>
+              </View>
+              {renderEditDropdown('gender', 'Gender', editProfile.gender, GENDER_OPTIONS, value =>
+                updateEditProfile('gender', value)
+              )}
+              {renderEditDropdown('pronouns', 'Pronouns', editProfile.pronouns, PRONOUN_OPTIONS, value =>
+                updateEditProfile('pronouns', value)
+              )}
+              <TextInput
+                style={styles.profileInput}
+                placeholder="Location"
+                placeholderTextColor="#94a3b8"
+                value={editProfile.location}
+                onChangeText={value => updateEditProfile('location', value)}
+              />
+              <TextInput
+                style={styles.profileInput}
+                placeholder="Website"
+                placeholderTextColor="#94a3b8"
+                autoCapitalize="none"
+                value={editProfile.website}
+                onChangeText={value => updateEditProfile('website', value)}
+              />
+              <TextInput
+                style={styles.profileInput}
+                placeholder="Company"
+                placeholderTextColor="#94a3b8"
+                value={editProfile.company}
+                onChangeText={value => updateEditProfile('company', value)}
+              />
+              <TextInput
+                style={styles.profileInput}
+                placeholder="Job title"
+                placeholderTextColor="#94a3b8"
+                value={editProfile.jobTitle}
+                onChangeText={value => updateEditProfile('jobTitle', value)}
+              />
+              <TextInput
+                style={styles.profileInput}
+                placeholder="Interests (comma separated)"
+                placeholderTextColor="#94a3b8"
+                value={editProfile.interests}
+                onChangeText={value => updateEditProfile('interests', value)}
+              />
+              <Text style={styles.profileInputHint}>Example: trading, music, travel</Text>
+              {renderEditDropdown('language', 'Preferred Language', editProfile.language, LANGUAGE_OPTIONS, value =>
+                updateEditProfile('language', value)
+              )}
+              {renderEditDropdown('timezone', 'Timezone', editProfile.timezone, TIMEZONE_OPTIONS, value =>
+                updateEditProfile('timezone', value)
+              )}
             </View>
           )}
 
-          <View style={styles.profileSection}>
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
+            <Text style={styles.sectionTitle}>Profile Details</Text>
+            {profileDetails.map(item => (
+              <View key={item.label} style={styles.profileDetailRow}>
+                <Text style={[styles.profileDetailLabel, {color: isDarkMode ? '#94a3b8' : '#64748b'}]}>{item.label}</Text>
+                <Text style={[styles.profileDetailValue, {color: isDarkMode ? '#e2e8f0' : '#0f172a'}]}>{item.value}</Text>
+              </View>
+            ))}
+          </View>
+          
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
             <Text style={styles.sectionTitle}>Profile Insights</Text>
             <View style={styles.profileInsightGrid}>
-              <View style={styles.profileInsightCard}>
-                <Text style={styles.profileInsightLabel}>Profile Views</Text>
-                <Text style={styles.profileInsightValue}>{(profileData.followers * 3).toLocaleString()}</Text>
-              </View>
-              <View style={styles.profileInsightCard}>
-                <Text style={styles.profileInsightLabel}>Post Reach</Text>
-                <Text style={styles.profileInsightValue}>{(recentPosts.length * 120).toLocaleString()}</Text>
-              </View>
-              <View style={[styles.profileInsightCard, styles.profileInsightCardFull]}>
-                <Text style={styles.profileInsightLabel}>Shares This Week</Text>
-                <Text style={styles.profileInsightValue}>{shareCount}</Text>
-              </View>
-              <View style={[styles.profileInsightCard, styles.profileInsightCardFull]}>
-                <Text style={styles.profileInsightLabel}>Streak</Text>
-                <Text style={styles.profileInsightValue}>{streakDays} days</Text>
-              </View>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={[
+                  styles.profileInsightCard,
+                  isDarkMode && {backgroundColor: '#1e293b', borderColor: '#475569'},
+                ]}
+                onPress={() => handleInsightPress('Profile Views')}>
+                <Text
+                  style={[
+                    styles.profileInsightLabel,
+                    isDarkMode && {color: '#cbd5e1'},
+                  ]}>
+                  Profile Views
+                </Text>
+                <Text style={[styles.profileInsightValue, {color: isDarkMode ? '#e2e8f0' : '#0f172a'}]}>
+                  {(profileData.followers * 3).toLocaleString()}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={[
+                  styles.profileInsightCard,
+                  isDarkMode && {backgroundColor: '#1e293b', borderColor: '#475569'},
+                ]}
+                onPress={() => handleInsightPress('Post Reach')}>
+                <Text
+                  style={[
+                    styles.profileInsightLabel,
+                    isDarkMode && {color: '#cbd5e1'},
+                  ]}>
+                  Post Reach
+                </Text>
+                <Text style={[styles.profileInsightValue, {color: isDarkMode ? '#e2e8f0' : '#0f172a'}]}>
+                  {(recentPosts.length * 120).toLocaleString()}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={[
+                  styles.profileInsightCard,
+                  styles.profileInsightCardFull,
+                  isDarkMode && {backgroundColor: '#1e293b', borderColor: '#475569'},
+                ]}
+                onPress={() => handleInsightPress('Shares This Week')}>
+                <Text
+                  style={[
+                    styles.profileInsightLabel,
+                    isDarkMode && {color: '#cbd5e1'},
+                  ]}>
+                  Shares This Week
+                </Text>
+                <Text style={[styles.profileInsightValue, {color: isDarkMode ? '#e2e8f0' : '#0f172a'}]}>
+                  {shareCount}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={[
+                  styles.profileInsightCard,
+                  styles.profileInsightCardFull,
+                  isDarkMode && {backgroundColor: '#1e293b', borderColor: '#475569'},
+                ]}
+                onPress={() => handleInsightPress('Streak')}>
+                <Text
+                  style={[
+                    styles.profileInsightLabel,
+                    isDarkMode && {color: '#cbd5e1'},
+                  ]}>
+                  Streak
+                </Text>
+                <Text style={[styles.profileInsightValue, {color: isDarkMode ? '#e2e8f0' : '#0f172a'}]}>
+                  {streakDays} days
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
 
-          <View style={styles.profileSection}>
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
             <Text style={styles.sectionTitle}>Quick Actions</Text>
             <View style={styles.profileActionRow}>
               <TouchableOpacity style={styles.profileActionButton} onPress={handleCreatePost}>
                 <MaterialCommunityIcons name="plus-box-outline" size={18} color="#2563eb" />
                 <Text style={styles.profileActionText}>Create Post</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.profileActionButton} onPress={handleInvite}>
+              <TouchableOpacity testID="invite-button" style={styles.profileActionButton} onPress={handleInvite}>
                 <MaterialCommunityIcons name="account-plus-outline" size={18} color="#2563eb" />
                 <Text style={styles.profileActionText}>Invite</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={[styles.profileActionRow, styles.profileActionRowSpaced]}>
+              <TouchableOpacity style={styles.profileActionButton} onPress={handleRefreshAvatar}>
+                <MaterialCommunityIcons name="camera-outline" size={18} color="#2563eb" />
+                <Text style={styles.profileActionText}>Change Photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.profileActionButton} onPress={() => setActiveTab('menu')}>
+                <MaterialCommunityIcons name="menu-open" size={18} color="#2563eb" />
+                <Text style={styles.profileActionText}>Open Menu</Text>
               </TouchableOpacity>
             </View>
             <View style={styles.profileStatusRow}>
@@ -2616,7 +3415,7 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
             />
           </View>
 
-          <View style={styles.profileSection}>
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
             <Text style={styles.sectionTitle}>Recent Posts</Text>
             <View style={styles.postsList}>
               {recentPosts.slice(0, 2).map(post => (
@@ -2625,13 +3424,314 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
                   <Text style={styles.postPreviewMeta}>{post.createdAt}</Text>
                 </TouchableOpacity>
               ))}
+              {recentPosts.length > 2 && (
+                <TouchableOpacity style={styles.viewAllButton} onPress={handleViewAllPosts}>
+                  <Text style={styles.viewAllText}>View All Posts</Text>
+                </TouchableOpacity>
+              )}
+              {recentPosts.length === 0 && (
+                <Text style={styles.noResultsText}>No posts yet. Create one above.</Text>
+              )}
             </View>
           </View>
         </>
       )}
 
+      {activeTab === 'menu' && (
+        <>
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
+            <Text style={styles.sectionTitle}>My Profile</Text>
+            {renderMenuRow(
+              'account-edit-outline',
+              'View and Edit Profile',
+              'Update personal details and public profile fields',
+              () => {
+                setActiveTab('overview');
+                setIsEditing(true);
+              }
+            )}
+            {renderMenuRow(
+              'bookmark-outline',
+              'Saved Items and Favorites',
+              'Open wishlist and saved products',
+              () => onNavigate('wishlist')
+            )}
+            {renderMenuRow(
+              'history',
+              'History',
+              'Check your recent orders and purchase history',
+              () => onNavigate('orders')
+            )}
+          </View>
+
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
+            <Text style={styles.sectionTitle}>Account</Text>
+            {renderMenuRow(
+              'account-cog-outline',
+              'Account Settings',
+              'Manage account preferences and linked identity',
+              () => onNavigate('settings')
+            )}
+            {renderMenuRow(
+              'wallet-outline',
+              'Subscription and Billing',
+              'Open billing, funds, and payment settings',
+              () => onNavigate('wallet')
+            )}
+            {renderMenuRow(
+              'camera-outline',
+              'Change Avatar/Photo',
+              'Refresh or update your profile picture',
+              handleRefreshAvatar
+            )}
+          </View>
+
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
+            <Text style={styles.sectionTitle}>Privacy</Text>
+            {renderMenuRow(
+              'eye-outline',
+              'Profile Visibility',
+              'Control who can discover your profile',
+              cyclePrivacyVisibility,
+              privacyVisibility
+            )}
+            {renderToggleRow(
+              'Activity Status',
+              'Show others when you are online',
+              showActivityStatus,
+              () => {
+                setShowActivityStatus(prev => !prev);
+                addActivity(
+                  `${!showActivityStatus ? 'Enabled' : 'Disabled'} activity status`,
+                  'account-clock-outline'
+                );
+              }
+            )}
+            {renderToggleRow(
+              'Search by Email',
+              'Allow people to find you by email address',
+              allowEmailLookup,
+              () => {
+                setAllowEmailLookup(prev => !prev);
+                addActivity(
+                  `${!allowEmailLookup ? 'Enabled' : 'Disabled'} email lookup`,
+                  'email-search-outline'
+                );
+              }
+            )}
+          </View>
+
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
+            <Text style={styles.sectionTitle}>Security</Text>
+            {renderMenuRow(
+              'lock-reset',
+              'Change Password',
+              'Update your sign-in password',
+              () =>
+                handleMenuAction(
+                  'Change password',
+                  'Password reset flow opened. Complete verification to continue.',
+                  'lock-reset'
+                )
+            )}
+            {renderToggleRow(
+              'Two-Factor Authentication (2FA)',
+              'Add an extra verification step on login',
+              twoFactorEnabled,
+              () => {
+                setTwoFactorEnabled(prev => !prev);
+                addActivity(
+                  `${!twoFactorEnabled ? 'Enabled' : 'Disabled'} two-factor authentication`,
+                  'shield-key-outline'
+                );
+              }
+            )}
+            {renderMenuRow(
+              'devices',
+              'Active Sessions',
+              'View and manage active logged-in devices',
+              () => handleMenuAction('Active sessions', `You currently have ${activeSessions} active sessions.`),
+              `${activeSessions} active`
+            )}
+            {renderMenuRow(
+              'logout-variant',
+              'Sign Out Other Sessions',
+              'Keep this device signed in and remove others',
+              handleSignOutOtherSessions
+            )}
+          </View>
+
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
+            <Text style={styles.sectionTitle}>Notifications</Text>
+            {renderMenuRow(
+              'bell-outline',
+              'Notification Inbox',
+              'Open your recent notifications feed',
+              () => onNavigate('notifications')
+            )}
+            {renderToggleRow('Push Notifications', 'Device alerts for new activity', notificationPrefs.push, () =>
+              toggleNotification('push', 'push')
+            )}
+            {renderToggleRow('Email Notifications', 'Updates sent to your email', notificationPrefs.email, () =>
+              toggleNotification('email', 'email')
+            )}
+            {renderToggleRow('SMS Notifications', 'Critical updates by SMS', notificationPrefs.sms, () =>
+              toggleNotification('sms', 'sms')
+            )}
+            {renderToggleRow('Marketing Updates', 'Promotions and offers', notificationPrefs.marketing, () =>
+              toggleNotification('marketing', 'marketing')
+            )}
+            {renderToggleRow('Security Alerts', 'Login and account security events', notificationPrefs.security, () =>
+              toggleNotification('security', 'security')
+            )}
+          </View>
+
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
+            <Text style={styles.sectionTitle}>Preferences</Text>
+            <Text style={styles.profilePreferenceLabel}>Language</Text>
+            <View style={styles.profileChipRow}>
+              {(['English', 'Spanish', 'French'] as const).map(option => (
+                <TouchableOpacity
+                  key={option}
+                  style={[styles.profileChip, profileData.language === option && styles.profileChipActive]}
+                  onPress={() => {
+                    setProfileData(prev => ({...prev, language: option}));
+                    setEditProfile(prev => ({...prev, language: option}));
+                    addActivity(`Changed language to ${option}`, 'translate');
+                  }}>
+                  <Text
+                    style={[
+                      styles.profileChipText,
+                      profileData.language === option && styles.profileChipTextActive,
+                    ]}>
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.profilePreferenceLabel}>Timezone</Text>
+            <View style={styles.profileChipRow}>
+              {(['America/New_York', 'America/Chicago', 'America/Los_Angeles'] as const).map(option => (
+                <TouchableOpacity
+                  key={option}
+                  style={[styles.profileChip, profileData.timezone === option && styles.profileChipActive]}
+                  onPress={() => {
+                    setProfileData(prev => ({...prev, timezone: option}));
+                    setEditProfile(prev => ({...prev, timezone: option}));
+                    addActivity(`Changed timezone to ${option}`, 'clock-outline');
+                  }}>
+                  <Text
+                    style={[
+                      styles.profileChipText,
+                      profileData.timezone === option && styles.profileChipTextActive,
+                    ]}>
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.profilePreferenceLabel}>Theme</Text>
+            <View style={styles.profileChipRow}>
+              {(['System', 'Light', 'Dark'] as const).map(option => (
+                <TouchableOpacity
+                  key={option}
+                  style={[styles.profileChip, themeMode === option && styles.profileChipActive]}
+                  onPress={() => {
+                    setThemeMode(option);
+                    addActivity(`Changed theme to ${option}`, 'theme-light-dark');
+                  }}>
+                  <Text
+                    style={[
+                      styles.profileChipText,
+                      themeMode === option && styles.profileChipTextActive,
+                    ]}>
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
+            <Text style={styles.sectionTitle}>Connected Accounts</Text>
+            {renderMenuRow(
+              'google',
+              'Google',
+              'Sign in with Google',
+              () => toggleConnectedAccount('google', 'Google'),
+              connectedAccounts.google ? 'Linked' : 'Not linked'
+            )}
+            {renderMenuRow(
+              'apple',
+              'Apple',
+              'Sign in with Apple',
+              () => toggleConnectedAccount('apple', 'Apple'),
+              connectedAccounts.apple ? 'Linked' : 'Not linked'
+            )}
+            {renderMenuRow(
+              'send',
+              'Telegram',
+              'Connect Telegram account',
+              () => toggleConnectedAccount('telegram', 'Telegram'),
+              connectedAccounts.telegram ? 'Linked' : 'Not linked'
+            )}
+            {renderMenuRow(
+              'facebook',
+              'Facebook',
+              'Connect Facebook account',
+              () => toggleConnectedAccount('facebook', 'Facebook'),
+              connectedAccounts.facebook ? 'Linked' : 'Not linked'
+            )}
+          </View>
+
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
+            <Text style={styles.sectionTitle}>Support</Text>
+            {renderMenuRow(
+              'help-circle-outline',
+              'Help and Support',
+              'Open help center and troubleshooting guides',
+              () =>
+                handleMenuAction(
+                  'Help and support',
+                  'Help center opened. Browse FAQs, guides, and contact options.',
+                  'help-circle-outline'
+                )
+            )}
+            {renderMenuRow(
+              'headset',
+              'Contact Support',
+              'Start a support chat with the app team',
+              () =>
+                handleMenuAction(
+                  'Contact support',
+                  'Support request started. A support agent will respond soon.',
+                  'headset'
+                )
+            )}
+            {renderMenuRow(
+              'account-off-outline',
+              'Deactivate Account',
+              'Temporarily disable your account',
+              handleDeactivateAccount,
+              undefined,
+              true
+            )}
+            {renderMenuRow(
+              'delete-outline',
+              'Delete Account',
+              'Permanently remove account and data',
+              handleDeleteAccount,
+              undefined,
+              true
+            )}
+          </View>
+        </>
+      )}
+
       {activeTab === 'activity' && (
-        <View style={styles.profileSection}>
+        <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
           <Text style={styles.sectionTitle}>Recent Activity</Text>
           {activityTimeline.length === 0 ? (
             <Text style={styles.noResultsText}>No activity yet</Text>
@@ -2655,7 +3755,7 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
 
       {activeTab === 'highlights' && (
         <>
-          <View style={styles.profileSection}>
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
             <Text style={styles.sectionTitle}>Achievements</Text>
             <View style={styles.profileBadgeRow}>
               <TouchableOpacity style={styles.profileBadge} onPress={() => handleHighlightAction('Top Creator')}>
@@ -2669,23 +3769,35 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
             </View>
           </View>
 
-          <View style={styles.profileSection}>
+          <View style={[styles.profileSection, {backgroundColor: profileSectionBg}]}>  
             <Text style={styles.sectionTitle}>Share Profile</Text>
             <View style={styles.shareContainer}>
               <TouchableOpacity
-                style={[styles.shareButton, styles.telegramShare]}
+                style={[
+                  styles.shareButton,
+                  styles.telegramShare,
+                  isDarkMode && {backgroundColor: '#1e293b', borderColor: '#475569'},
+                ]}
                 onPress={() => handleShareProfile('Telegram')}>
                 <MaterialCommunityIcons name="send" size={18} color="#0284c7" />
                 <Text style={styles.shareLabel}>Telegram</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.shareButton, styles.vkShare]}
+                style={[
+                  styles.shareButton,
+                  styles.vkShare,
+                  isDarkMode && {backgroundColor: '#1e293b', borderColor: '#475569'},
+                ]}
                 onPress={() => handleShareProfile('VK')}>
                 <MaterialCommunityIcons name="alpha-v-circle" size={18} color="#1d4ed8" />
                 <Text style={styles.shareLabel}>VK</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.shareButton, styles.facebookShare]}
+                style={[
+                  styles.shareButton,
+                  styles.facebookShare,
+                  isDarkMode && {backgroundColor: '#1e293b', borderColor: '#475569'},
+                ]}
                 onPress={() => handleShareProfile('Facebook')}>
                 <MaterialCommunityIcons name="facebook" size={18} color="#2563eb" />
                 <Text style={styles.shareLabel}>Facebook</Text>
@@ -4501,13 +5613,28 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: '#0f172a',
   },
+  profileAvatarWrap: {
+    marginBottom: 14,
+  },
   profileAvatar: {
     width: 104,
     height: 104,
     borderRadius: 52,
-    marginBottom: 16,
     borderWidth: 3,
     borderColor: '#93c5fd',
+  },
+  profileAvatarBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: 2,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#2563eb',
+    borderWidth: 2,
+    borderColor: '#0f172a',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   profileName: {
     fontSize: 24,
@@ -4518,6 +5645,16 @@ const styles = StyleSheet.create({
   profileUsername: {
     fontSize: 14,
     color: '#cbd5e1',
+    marginBottom: 6,
+  },
+  profileMeta: {
+    fontSize: 12,
+    color: '#c7d2fe',
+    marginBottom: 2,
+  },
+  profileMetaSecondary: {
+    fontSize: 11,
+    color: '#94a3b8',
     marginBottom: 8,
   },
   profileBio: {
@@ -4559,9 +5696,30 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     color: '#0f172a',
   },
+  profileDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  profileDetailLabel: {
+    width: '38%',
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  profileDetailValue: {
+    width: '60%',
+    fontSize: 12,
+    color: '#0f172a',
+    textAlign: 'right',
+  },
   postsList: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
   },
   postPreview: {
     width: '48%',
@@ -4610,6 +5768,7 @@ const styles = StyleSheet.create({
   profileInsightGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
   },
   profileInsightCard: {
     width: '48%',
@@ -4633,9 +5792,25 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     marginTop: 6,
   },
+  viewAllButton: {
+    marginTop: 8,
+    alignSelf: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: '#2563eb',
+  },
+  viewAllText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   profileActionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+  },
+  profileActionRowSpaced: {
+    marginTop: 10,
   },
   profileActionButton: {
     width: '48%',
@@ -4745,6 +5920,107 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     marginBottom: 10,
   },
+  profileInputHint: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: -4,
+    marginBottom: 10,
+  },
+  profileFieldLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  profileDropdownBlock: {
+    marginBottom: 10,
+  },
+  profileDropdownTrigger: {
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  profileDropdownTriggerText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#0f172a',
+    marginRight: 10,
+  },
+  profileDropdownTriggerTextPlaceholder: {
+    color: '#94a3b8',
+  },
+  profileDropdownMenu: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    maxHeight: 180,
+  },
+  profileDropdownMenuScroll: {
+    maxHeight: 180,
+  },
+  profileDropdownMenuContent: {
+    paddingVertical: 4,
+  },
+  profileDropdownItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  profileDropdownItemActive: {
+    backgroundColor: '#e0ecff',
+  },
+  profileDropdownItemText: {
+    fontSize: 13,
+    color: '#334155',
+  },
+  profileDropdownItemTextActive: {
+    color: '#1d4ed8',
+    fontWeight: '700',
+  },
+  profileDatePickerBlock: {
+    marginBottom: 10,
+  },
+  profileDatePickerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  profileDateDropdownColumn: {
+    width: '32%',
+  },
+  profileDateDropdownTrigger: {
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  profileDateDropdownText: {
+    fontSize: 13,
+    color: '#0f172a',
+    marginRight: 8,
+  },
+  profileDateDropdownMenu: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    maxHeight: 150,
+  },
+  profileDateDropdownMenuScroll: {
+    maxHeight: 150,
+  },
   profileInputMultiline: {
     minHeight: 80,
     textAlignVertical: 'top',
@@ -4789,6 +6065,133 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#fff',
+  },
+  profileMenuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  profileMenuRowDanger: {
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+  },
+  profileMenuRowIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#eff6ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  profileMenuRowBody: {
+    flex: 1,
+  },
+  profileMenuRowTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  profileMenuRowTitleDanger: {
+    color: '#991b1b',
+  },
+  profileMenuRowDescription: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+    marginRight: 8,
+  },
+  profileMenuRowValue: {
+    fontSize: 11,
+    color: '#2563eb',
+    fontWeight: '700',
+    marginRight: 4,
+  },
+  profileToggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  profileToggleTextWrap: {
+    flex: 1,
+    marginRight: 12,
+  },
+  profileToggleTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  profileToggleDescription: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  profileToggleButton: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#fff',
+  },
+  profileToggleButtonActive: {
+    borderColor: '#93c5fd',
+    backgroundColor: '#e0ecff',
+  },
+  profileToggleButtonText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '700',
+  },
+  profileToggleButtonTextActive: {
+    color: '#2563eb',
+  },
+  profilePreferenceLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 8,
+    marginTop: 6,
+  },
+  profileChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 6,
+  },
+  profileChip: {
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginRight: 8,
+    marginBottom: 8,
+    backgroundColor: '#f8fafc',
+  },
+  profileChipActive: {
+    borderColor: '#93c5fd',
+    backgroundColor: '#e0ecff',
+  },
+  profileChipText: {
+    fontSize: 11,
+    color: '#475569',
+    fontWeight: '700',
+  },
+  profileChipTextActive: {
+    color: '#2563eb',
   },
 
   // Bottom Navigation

@@ -7,6 +7,8 @@ A full-featured React Native app with integrated social media, e-commerce, and f
 ### Social Media
 - **Feed** - Create and share posts with likes and comments (Instagram/Threads style)
 - **Messaging** - Real-time chat with conversations (WhatsApp style)
+  - Search, unread filter and thread view with composer
+  - Dark/light theme support and improved empty states
 - **Stories** - Ephemeral content sharing with timers (Snapchat style)
 - **Profiles** - User profiles with followers/following stats
 
@@ -235,6 +237,7 @@ npm run web        # Web browser
 - [x] Video stories endpoint
 - [x] Live shopping events
 - [x] Customer support chatbot
+- [x] Chat screen unit tests covering search/filter, conversation thread, send message and theming
 - [x] Real-time stock quotes (API integration)
 - [x] Advanced charting & technical analysis
 - [x] Options trading

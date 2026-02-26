@@ -98,6 +98,27 @@ You've successfully run and modified your React Native App. :partying_face:
 
 If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
 
+---
+
+## Additional Features
+
+- **Profile tab** now supports full editing, quick actions (create post, invite, change photo), activity timeline, and insights.
+- **Dark mode toggler** available under *Menu → Preferences → Theme* (System/Light/Dark) which changes UI dynamically.
+
+## Testing
+
+Component tests have been added for the profile screen. They verify:
+
+1. Invite code copying and alert display
+2. Stat button taps trigger alerts
+3. Theme toggling updates header styling
+
+Run the suite with:
+
+```sh
+npm test
+```
+
 # Learn More
 
 To learn more about React Native, take a look at the following resources:
