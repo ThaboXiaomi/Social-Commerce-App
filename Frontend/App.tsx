@@ -37,11 +37,13 @@ import {sessionStorage} from './utils/sessionStorage';
 import {MarketDataService} from './services/marketDataService';
 import Sparkline from './components/Sparkline';
 import {MarketRow} from './components/MarketRow';
+import {lightColors, darkColors} from './utils/theme';
 
 // Market data service instance
 let marketDataService: MarketDataService | null = null;
 
 let styles: any = {};
+type ThemeColors = typeof lightColors;
 
 const API_BASE =
   ((((globalThis as any)?.process?.env?.EXPO_PUBLIC_API_BASE_URL as string) || 'http://localhost:8000').trim() || 'http://localhost:8000').replace(/\/+$/, '');
@@ -243,7 +245,7 @@ const buildEditableProfileState = (profile: User): EditableProfileState => ({
   timezone: profile.timezone,
 });
 
-function createStyles(colors: any) {
+function createStyles(colors: ThemeColors) {
   const base: any = {};
   Object.keys(defaultStyles).forEach(key => {
     base[key] = StyleSheet.flatten((defaultStyles as any)[key]) || {};
@@ -377,6 +379,58 @@ function createStyles(colors: any) {
   base.profileInput = {...base.profileInput, backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.textPrimary};
   base.profileInputHint = {...base.profileInputHint, color: colors.muted};
   base.profileFieldLabel = {...base.profileFieldLabel, color: colors.textSecondary};
+  base.profileDropdownTrigger = {...base.profileDropdownTrigger, backgroundColor: colors.inputBg, borderColor: colors.inputBorder};
+  base.profileDropdownTriggerText = {...base.profileDropdownTriggerText, color: colors.textPrimary};
+  base.profileDropdownTriggerTextPlaceholder = {...base.profileDropdownTriggerTextPlaceholder, color: colors.placeholder};
+  base.profileDropdownMenu = {...base.profileDropdownMenu, backgroundColor: colors.surface, borderColor: colors.cardBorder};
+  base.profileDropdownItemActive = {...base.profileDropdownItemActive, backgroundColor: colors.chipBg};
+  base.profileDropdownItemText = {...base.profileDropdownItemText, color: colors.textSecondary};
+  base.profileDropdownItemTextActive = {...base.profileDropdownItemTextActive, color: colors.accent};
+  base.profileDateDropdownTrigger = {...base.profileDateDropdownTrigger, backgroundColor: colors.inputBg, borderColor: colors.inputBorder};
+  base.profileDateDropdownText = {...base.profileDateDropdownText, color: colors.textPrimary};
+  base.profileDateDropdownMenu = {...base.profileDateDropdownMenu, backgroundColor: colors.surface, borderColor: colors.cardBorder};
+  base.profileStatusChip = {...base.profileStatusChip, backgroundColor: colors.actionBg, borderColor: colors.inputBorder};
+  base.profileStatusChipActive = {...base.profileStatusChipActive, backgroundColor: colors.chipBg, borderColor: colors.accentLight};
+  base.profileStatusText = {...base.profileStatusText, color: colors.muted};
+  base.profileStatusTextActive = {...base.profileStatusTextActive, color: colors.accent};
+  base.postPreviewMeta = {...base.postPreviewMeta, color: colors.muted};
+  base.profileInsightLabel = {...base.profileInsightLabel, color: colors.muted};
+  base.profileTimelineIcon = {...base.profileTimelineIcon, backgroundColor: colors.actionBg};
+  base.profileBadge = {...base.profileBadge, backgroundColor: colors.actionBg, borderColor: colors.inputBorder};
+  base.profileBadgeText = {...base.profileBadgeText, color: colors.textSecondary};
+  base.profileMenuRow = {...base.profileMenuRow, backgroundColor: colors.actionBg, borderColor: colors.cardBorder};
+  base.profileMenuRowDanger = {...base.profileMenuRowDanger, backgroundColor: colors.actionBg, borderColor: colors.error};
+  base.profileMenuRowIcon = {...base.profileMenuRowIcon, backgroundColor: colors.chipBg};
+  base.profileMenuRowTitle = {...base.profileMenuRowTitle, color: colors.textPrimary};
+  base.profileMenuRowTitleDanger = {...base.profileMenuRowTitleDanger, color: colors.error};
+  base.profileMenuRowDescription = {...base.profileMenuRowDescription, color: colors.muted};
+  base.profileMenuRowValue = {...base.profileMenuRowValue, color: colors.accent};
+  base.profileToggleRow = {...base.profileToggleRow, backgroundColor: colors.actionBg, borderColor: colors.cardBorder};
+  base.profileToggleTitle = {...base.profileToggleTitle, color: colors.textPrimary};
+  base.profileToggleDescription = {...base.profileToggleDescription, color: colors.muted};
+  base.profileToggleButton = {...base.profileToggleButton, backgroundColor: colors.surface, borderColor: colors.inputBorder};
+  base.profileToggleButtonActive = {...base.profileToggleButtonActive, backgroundColor: colors.chipBg, borderColor: colors.accentLight};
+  base.profileToggleButtonText = {...base.profileToggleButtonText, color: colors.muted};
+  base.profileToggleButtonTextActive = {...base.profileToggleButtonTextActive, color: colors.accent};
+  base.profilePreferenceLabel = {...base.profilePreferenceLabel, color: colors.textSecondary};
+  base.profileChip = {...base.profileChip, backgroundColor: colors.actionBg, borderColor: colors.inputBorder};
+  base.profileChipActive = {...base.profileChipActive, backgroundColor: colors.chipBg, borderColor: colors.accentLight};
+  base.profileChipText = {...base.profileChipText, color: colors.textSecondary};
+  base.profileChipTextActive = {...base.profileChipTextActive, color: colors.accent};
+  base.shareButton = {...base.shareButton, backgroundColor: colors.actionBg, borderColor: colors.inputBorder};
+  base.shareLabel = {...base.shareLabel, color: colors.textSecondary};
+
+  base.bottomNav = {...base.bottomNav, backgroundColor: colors.surface, borderColor: colors.inputBorder};
+  base.navActive = {...base.navActive, backgroundColor: colors.chipBg};
+  base.navText = {...base.navText, color: colors.muted};
+  base.navTextActive = {...base.navTextActive, color: colors.accent};
+
+  base.settingsSection = {...base.settingsSection, borderColor: colors.cardBorder, backgroundColor: colors.surface};
+  base.settingsSectionTitle = {...base.settingsSectionTitle, color: colors.textPrimary};
+  base.settingsItem = {...base.settingsItem, borderBottomColor: colors.cardBorder};
+  base.settingsItemActive = {...base.settingsItemActive, backgroundColor: colors.chipBg};
+  base.settingsLabel = {...base.settingsLabel, color: colors.textPrimary};
+  base.toggleSwitch = {...base.toggleSwitch, color: colors.accent};
 
   // Theme toggle button
   base.themeToggle = {
@@ -712,62 +766,13 @@ interface AuthActionResult {
 }
 
 type Screen = 'feed' | 'chat' | 'stories' | 'profile' | 'shop' | 'cart' | 'orders' | 'stocks' | 'forex' | 'notifications' | 'search' | 'wishlist' | 'wallet' | 'crypto' | 'copy-trading' | 'loyalty' | 'settings' | 'followers' | 'analytics' | 'map' | 'mini-apps';
+type ThemeMode = 'System' | 'Light' | 'Dark';
 
 function App() {
   // login/dark status for screens before user signs in
   const loginIsDark = useColorScheme() === 'dark';
 
-  // Theme: compute colors from system preference and create styles
-  const scheme = useColorScheme() || 'light';
-  const isDark = scheme === 'dark';
-  const lightColors = {
-    bg: '#ffffff',
-    screenBg: '#f1f5f9',
-    border: '#e0e0e0',
-    muted: '#64748b',
-    textPrimary: '#0f172a',
-    textSecondary: '#334155',
-    accent: '#2563eb',
-    accentLight: '#93c5fd',
-    surface: '#ffffff',
-    cardBorder: '#e2e8f0',
-    chipBg: '#e2e8f0',
-    onAccent: '#f8fbff',
-    inputBg: '#f8fafc',
-    inputBorder: '#dbeafe',
-    actionBg: '#f8fafc',
-    newsBorder: '#dbeafe',
-    heroBg: '#0f172a',
-    heroKicker: '#93c5fd',
-    heroTitle: '#f8fbff',
-    heroSubtitle: '#bfdbfe',
-    heroIconBg: 'rgba(37, 99, 235, 0.8)',
-  };
-  const darkColors = {
-    bg: '#030712',
-    screenBg: '#041026',
-    border: '#111827',
-    muted: '#9ca3af',
-    textPrimary: '#e6eef8',
-    textSecondary: '#cbd5e1',
-    accent: '#60a5fa',
-    accentLight: '#a5b4fc',
-    surface: '#071127',
-    cardBorder: '#1f2937',
-    chipBg: '#0b1220',
-    onAccent: '#0f172a',
-    inputBg: '#071127',
-    inputBorder: '#1f2937',
-    actionBg: '#071127',
-    newsBorder: '#0f1720',
-    heroBg: '#061022',
-    heroKicker: '#93c5fd',
-    heroTitle: '#f8fbff',
-    heroSubtitle: '#bfdbfe',
-    heroIconBg: 'rgba(96,165,250,0.2)',
-  };
-
-  styles = createStyles(isDark ? darkColors : lightColors);
+  styles = createStyles(loginIsDark ? darkColors : lightColors);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -1541,8 +1546,9 @@ export function AppContent({currentUser, onLogout}: {currentUser: User; onLogout
 
   // theme handling for the main application screens
   const colorScheme = useColorScheme();
-  const [themeMode, setThemeMode] = useState<'System' | 'Light' | 'Dark'>('System');
+  const [themeMode, setThemeMode] = useState<ThemeMode>('System');
   const isDarkMode = themeMode === 'System' ? colorScheme === 'dark' : themeMode === 'Dark';
+  styles = createStyles(isDarkMode ? darkColors : lightColors);
 
   // load/save persisted theme preference
   useEffect(() => {
@@ -1550,7 +1556,7 @@ export function AppContent({currentUser, onLogout}: {currentUser: User; onLogout
       try {
         const v = await AsyncStorage.getItem('theme_mode');
         if (v === 'Light' || v === 'Dark' || v === 'System') {
-          setThemeMode(v as any);
+          setThemeMode(v);
         }
       } catch {
         // ignore
@@ -1615,7 +1621,14 @@ export function AppContent({currentUser, onLogout}: {currentUser: User; onLogout
       {currentScreen === 'crypto' && <CryptoScreen />}
       {currentScreen === 'copy-trading' && <CopyTradingScreen />}
       {currentScreen === 'loyalty' && <LoyaltyScreen />}
-      {currentScreen === 'settings' && <SettingsScreen onScreenChange={setCurrentScreen} />}
+      {currentScreen === 'settings' && (
+        <SettingsScreen
+          onScreenChange={setCurrentScreen}
+          isDarkMode={isDarkMode}
+          themeMode={themeMode}
+          setThemeMode={setThemeMode}
+        />
+      )}
       {currentScreen === 'followers' && <FollowersScreen />}
       {currentScreen === 'analytics' && <AnalyticsScreen />}
       {currentScreen === 'map' && <MapScreen onBack={() => setCurrentScreen('shop')} />}
@@ -2894,8 +2907,8 @@ function ProfileScreen({
   onLogout: () => void;
   onNavigate: (screen: Screen) => void;
   isDarkMode: boolean;
-  themeMode: 'System' | 'Light' | 'Dark';
-  setThemeMode: (mode: 'System' | 'Light' | 'Dark') => void;
+  themeMode: ThemeMode;
+  setThemeMode: (mode: ThemeMode) => void;
 }) {
   const profileHeaderBg = isDarkMode ? '#1e293b' : '#0f172a';
   const profileTabBarBg = isDarkMode ? '#334155' : '#e2e8f0';
@@ -5115,8 +5128,17 @@ function LoyaltyScreen() {
 }
 
 // Settings Screen
-function SettingsScreen({onScreenChange}: {onScreenChange: (screen: Screen) => void}) {
-  const [darkMode, setDarkMode] = useState(false);
+function SettingsScreen({
+  onScreenChange,
+  isDarkMode,
+  themeMode,
+  setThemeMode,
+}: {
+  onScreenChange: (screen: Screen) => void;
+  isDarkMode: boolean;
+  themeMode: ThemeMode;
+  setThemeMode: (mode: ThemeMode) => void;
+}) {
   const [language, setLanguage] = useState('en');
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
 
@@ -5131,7 +5153,6 @@ function SettingsScreen({onScreenChange}: {onScreenChange: (screen: Screen) => v
       if (!response.ok || data?.error) {
         return;
       }
-      setDarkMode(!!data.dark_mode);
       setLanguage(data.language || 'en');
       setNotificationsEnabled(data.notifications_enabled !== false);
     } catch {}
@@ -5154,12 +5175,12 @@ function SettingsScreen({onScreenChange}: {onScreenChange: (screen: Screen) => v
   };
 
   const toggleDarkMode = async () => {
-    const next = !darkMode;
-    setDarkMode(next);
+    const next = !isDarkMode;
+    setThemeMode(next ? 'Dark' : 'Light');
     try {
       await persistSettings({dark_mode: next});
     } catch {
-      setDarkMode(!next);
+      setThemeMode(themeMode);
       Alert.alert('Save failed', 'Unable to update dark mode.');
     }
   };
@@ -5195,7 +5216,7 @@ function SettingsScreen({onScreenChange}: {onScreenChange: (screen: Screen) => v
         <Text style={styles.settingsSectionTitle}>Display</Text>
         <TouchableOpacity style={styles.settingsItem} onPress={toggleDarkMode}>
           <Text style={styles.settingsLabel}>Dark Mode</Text>
-          <Text style={styles.toggleSwitch}>{darkMode ? 'ON' : 'OFF'}</Text>
+          <Text style={styles.toggleSwitch}>{isDarkMode ? 'ON' : 'OFF'}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.settingsItem} onPress={toggleNotifications}>
           <Text style={styles.settingsLabel}>Notifications</Text>
