@@ -28,6 +28,8 @@ import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
+import MapScreen from './MapScreen';
+import MiniAppsScreen from './MiniAppsScreen';
 
 const API_BASE =
   ((((globalThis as any)?.process?.env?.EXPO_PUBLIC_API_BASE_URL as string) || 'http://localhost:8000').trim() || 'http://localhost:8000').replace(/\/+$/, '');
@@ -408,7 +410,7 @@ interface AuthActionResult {
   error?: string;
 }
 
-type Screen = 'feed' | 'chat' | 'stories' | 'profile' | 'shop' | 'cart' | 'orders' | 'stocks' | 'forex' | 'notifications' | 'search' | 'wishlist' | 'wallet' | 'crypto' | 'copy-trading' | 'loyalty' | 'settings' | 'followers' | 'analytics';
+type Screen = 'feed' | 'chat' | 'stories' | 'profile' | 'shop' | 'cart' | 'orders' | 'stocks' | 'forex' | 'notifications' | 'search' | 'wishlist' | 'wallet' | 'crypto' | 'copy-trading' | 'loyalty' | 'settings' | 'followers' | 'analytics' | 'map' | 'mini-apps';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -416,27 +418,12 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [accessToken, setAccessToken] = useState('');
   const [refreshToken, setRefreshToken] = useState('');
-  const [accounts, setAccounts] = useState<AuthAccount[]>([
-    {
-      id: 1,
-      fullName: 'Demo User',
-      username: 'demo',
-      email: 'demo@unihub.com',
-      password: 'Demo@123',
-    },
-    {
-      id: 2,
-      fullName: 'Test User',
-      username: 'testuser',
-      email: 'test@unihub.com',
-      password: 'Test@1234',
-    },
-  ]);
+  const [accounts, setAccounts] = useState<AuthAccount[]>([]);
   const [activeUser, setActiveUser] = useState<User>({
-    id: 1,
-    username: 'demo',
-    name: 'Demo User',
-    avatar: 'https://ui-avatars.com/api/?name=Demo+User&background=2563eb&color=ffffff&bold=true',
+    id: 0,
+    username: '',
+    name: '',
+    avatar: 'https://ui-avatars.com/api/?name=UniHub&background=2563eb&color=ffffff&bold=true',
     bio: '',
     followers: 0,
     following: 0,
@@ -1144,10 +1131,10 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
     <View style={styles.container}>
       {/* Content */}
       {currentScreen === 'feed' && <FeedScreen />}
-      {currentScreen === 'chat' && <ChatScreen />}
+      {currentScreen === 'chat' && <ChatScreen onOpenMiniApps={() => setCurrentScreen('mini-apps')} />}
       {currentScreen === 'stories' && <StoriesScreen />}
       {currentScreen === 'profile' && <ProfileScreen user={currentUser} onLogout={onLogout} />}
-      {currentScreen === 'shop' && <ShoppingScreen />}
+      {currentScreen === 'shop' && <ShoppingScreen onOpenMap={() => setCurrentScreen('map')} />}
       {currentScreen === 'cart' && <CartScreen />}
       {currentScreen === 'orders' && <OrdersScreen />}
       {currentScreen === 'stocks' && <StocksScreen />}
@@ -1162,6 +1149,13 @@ function AppContent({currentUser, onLogout}: {currentUser: User; onLogout: () =>
       {currentScreen === 'settings' && <SettingsScreen onScreenChange={setCurrentScreen} />}
       {currentScreen === 'followers' && <FollowersScreen />}
       {currentScreen === 'analytics' && <AnalyticsScreen />}
+      {currentScreen === 'map' && <MapScreen onBack={() => setCurrentScreen('shop')} />}
+      {currentScreen === 'mini-apps' && (
+        <MiniAppsScreen
+          onBack={() => setCurrentScreen('chat')}
+          onOpenMap={() => setCurrentScreen('map')}
+        />
+      )}
 
       {/* Bottom Navigation */}
       <View
@@ -1497,7 +1491,7 @@ function FeedScreen() {
 }
 
 // Chat Screen (WhatsApp style)
-function ChatScreen() {
+function ChatScreen({onOpenMiniApps}: {onOpenMiniApps: () => void}) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1593,6 +1587,13 @@ function ChatScreen() {
         <View style={styles.chatHeroIcon}>
           <MaterialCommunityIcons name="message-badge-outline" size={20} color="#f8fbff" />
         </View>
+      </View>
+
+      <View style={styles.chatQuickRow}>
+        <TouchableOpacity style={styles.chatQuickButton} onPress={onOpenMiniApps}>
+          <MaterialCommunityIcons name="view-grid-outline" size={16} color="#2563eb" />
+          <Text style={styles.chatQuickText}>Open Mini Apps</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.chatControlRow}>
@@ -2710,7 +2711,7 @@ function ProfileScreen({ user, onLogout }: { user: User; onLogout: () => void })
 }
 
 // Shopping Screen (Amazon/Temu/Facebook Marketplace style)
-function ShoppingScreen() {
+function ShoppingScreen({onOpenMap}: {onOpenMap: () => void}) {
   const [products, setProducts] = useState<Product[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [showcasePhotos, setShowcasePhotos] = useState<ExternalPhoto[]>([]);
@@ -2868,6 +2869,13 @@ function ShoppingScreen() {
         <View style={styles.shopHeroIcon}>
           <MaterialCommunityIcons name="shopping-search" size={20} color="#f8fbff" />
         </View>
+      </View>
+
+      <View style={styles.shopQuickRow}>
+        <TouchableOpacity style={styles.shopMapButton} onPress={onOpenMap}>
+          <MaterialCommunityIcons name="map-search-outline" size={16} color="#065f46" />
+          <Text style={styles.shopMapText}>Browse Nearby on Map</Text>
+        </TouchableOpacity>
       </View>
 
       {showcasePhotos.length > 0 && (
@@ -4225,6 +4233,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  chatQuickRow: {
+    marginBottom: 12,
+  },
+  chatQuickButton: {
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+  },
+  chatQuickText: {
+    marginLeft: 8,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
   chatControlRow: {
     flexDirection: 'row',
     marginBottom: 12,
@@ -4848,6 +4876,26 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(16, 185, 129, 0.8)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  shopQuickRow: {
+    marginBottom: 10,
+  },
+  shopMapButton: {
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+    backgroundColor: '#ecfdf5',
+    borderRadius: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+  },
+  shopMapText: {
+    marginLeft: 8,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065f46',
   },
   shopPhotoRow: {
     paddingBottom: 10,

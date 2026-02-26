@@ -7,6 +7,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from uuid import uuid4
+import math
 import os
 import urllib.parse
 import urllib.request
@@ -46,6 +47,9 @@ MEDIA_BASE_URL = os.getenv("MEDIA_BASE_URL", "http://localhost:8000").rstrip("/"
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 STATE_KEYS = {
+    "users": "users",
+    "sellers": "sellers",
+    "products": "products",
     "posts": "posts",
     "messages": "messages",
     "stories": "stories",
@@ -72,17 +76,18 @@ STATE_KEYS = {
 
 EXTERNAL_TIMEOUT_SECONDS = 6
 LIVE_STOCK_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "AMD"]
+NOMINATIM_BASE_URL = os.getenv("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org").rstrip("/")
+OVERPASS_API_URL = os.getenv("OVERPASS_API_URL", "https://overpass-api.de/api/interpreter").strip()
+OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org").rstrip("/")
+OPENMETEO_BASE_URL = os.getenv("OPENMETEO_BASE_URL", "https://api.open-meteo.com/v1").rstrip("/")
+FRANKFURTER_API_URL = os.getenv("FRANKFURTER_API_URL", "https://api.frankfurter.app").rstrip("/")
+WORLDTIME_API_URL = os.getenv("WORLDTIME_API_URL", "https://worldtimeapi.org/api").rstrip("/")
+NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT", "UniHub/1.0")
 
 
 def _to_jsonable(value: Any) -> Any:
     if isinstance(value, BaseModel):
-        model_dump = getattr(value, "model_dump", None)
-        if callable(model_dump):
-            return model_dump()
-        to_dict = getattr(value, "dict", None)
-        if callable(to_dict):
-            return to_dict()
-        return value
+        return _to_jsonable(value.dict())
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, list):
@@ -94,6 +99,10 @@ def _to_jsonable(value: Any) -> Any:
 
 def _persist_state(key: str, value: Any) -> None:
     set_state(key, _to_jsonable(value))
+
+
+def _now_iso() -> str:
+    return datetime.utcnow().isoformat()
 
 
 def _build_media_url(folder: str, filename: str) -> str:
@@ -187,6 +196,34 @@ def _fetch_json(url: str, headers: Optional[Dict[str, str]] = None) -> Optional[
     except Exception:
         return None
     return None
+
+
+def _fetch_json_post(url: str, data: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> Optional[Any]:
+    payload = urllib.parse.urlencode(data).encode("utf-8")
+    request_headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    if headers:
+        request_headers.update(headers)
+    request = urllib.request.Request(url, data=payload, headers=request_headers)
+    try:
+        with urllib.request.urlopen(request, timeout=EXTERNAL_TIMEOUT_SECONDS + 8) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body)
+    except Exception:
+        return None
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    earth_radius_km = 6371.0
+    d_lat = math.radians(lat2 - lat1)
+    d_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(d_lon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return earth_radius_km * c
 
 
 def _fetch_live_stocks() -> List[Any]:
@@ -485,11 +522,15 @@ def _hydrate_primitive_list(key: str, default_items: List[Dict[str, Any]]) -> Li
 
 
 def _hydrate_all_state() -> None:
+    global USERS, SELLERS, PRODUCTS
     global POSTS, MESSAGES, STORIES, PRODUCTS_REVIEW, CART, ORDERS, WATCHLISTS, TRADES, PORTFOLIOS
     global NOTIFICATIONS, REVIEWS, WISHLISTS, WALLETS, CHAT_MESSAGES, FOLLOWS
     global COPY_TRADERS, LOYALTY_POINTS, ANALYTICS_DATA, SETTINGS_DATA
     global PAYMENT_INTENTS, LIVE_SHOPPING_EVENTS, SUPPORT_MESSAGES
 
+    USERS = _hydrate_model_dict(STATE_KEYS["users"], User, USERS)
+    SELLERS = _hydrate_model_list(STATE_KEYS["sellers"], Seller, SELLERS)
+    PRODUCTS = _hydrate_model_list(STATE_KEYS["products"], Product, PRODUCTS)
     POSTS = _hydrate_model_list(STATE_KEYS["posts"], Post, POSTS)
     MESSAGES = _hydrate_model_list(STATE_KEYS["messages"], Message, MESSAGES)
     STORIES = _hydrate_model_list(STATE_KEYS["stories"], Story, STORIES)
@@ -812,82 +853,57 @@ class OptionsTradeRequest(BaseModel):
     premium: float
     side: str = "buy"
 
-USERS = {
-    1: User(id=1, username="john_doe", name="John Doe", avatar="https://via.placeholder.com/50", bio="Travel enthusiast ðŸŒ", followers=1250, following=340),
-    2: User(id=2, username="jane_smith", name="Jane Smith", avatar="https://via.placeholder.com/50", bio="Designer & Photographer", followers=2105, following=450),
-    3: User(id=3, username="mike_tech", name="Mike Tech", avatar="https://via.placeholder.com/50", bio="Tech enthusiast", followers=890, following=210),
-}
-
-SELLERS = [
-    Seller(id=1, user_id=2, shop_name="Jane's Electronics", shop_avatar="https://via.placeholder.com/50", rating=4.8, reviews_count=1250, followers=5600, bio="Premium electronics & gadgets ðŸ“±"),
-    Seller(id=2, user_id=3, shop_name="Tech Hub", shop_avatar="https://via.placeholder.com/50", rating=4.5, reviews_count=890, followers=3400, bio="Affordable tech products"),
-    Seller(id=3, user_id=1, shop_name="Global Deals", shop_avatar="https://via.placeholder.com/50", rating=4.7, reviews_count=2100, followers=7200, bio="Best deals from around the world"),
-]
-
-PRODUCTS = []
-
-PRODUCTS_REVIEW = []
-
-POSTS = []
-
-
-MESSAGES = [
-    Message(id=1, sender_id=1, receiver_id=2, sender_name="John Doe", content="Hey! How are you?", timestamp="10:30 AM", read=True),
-    Message(id=2, sender_id=2, receiver_id=1, sender_name="Jane Smith", content="Doing great! How about you?", timestamp="10:32 AM", read=True),
-    Message(id=3, sender_id=1, receiver_id=3, sender_name="John Doe", content="Let's grab coffee tomorrow", timestamp="Yesterday", read=False),
-]
-
-STORIES = [
-    Story(id=1, user_id=1, username="john_doe", avatar="https://via.placeholder.com/50", image="https://via.placeholder.com/300", expires_in=3600),
-    Story(id=2, user_id=2, username="jane_smith", avatar="https://via.placeholder.com/50", image="https://via.placeholder.com/300", expires_in=7200),
-]
-
-# Forex & Stock Mock Data
-STOCKS = [
-    Stock(id=1, symbol="AAPL", name="Apple Inc.", price=215.45, change=2.5, change_amount=5.25, market_cap="3.2T", volume="52.3M", high_52w=237.89, low_52w=124.17, pe_ratio=32.4, dividend_yield=0.42, description="Technology giant. Leader in consumer electronics and software.", chart_data=[210.20, 211.50, 213.80, 214.20, 215.00, 214.80, 215.45]),
-    Stock(id=2, symbol="MSFT", name="Microsoft Corp.", price=421.80, change=1.8, change_amount=7.45, market_cap="3.1T", volume="18.9M", high_52w=445.99, low_52w=213.43, pe_ratio=38.2, dividend_yield=0.73, description="Cloud computing and enterprise software leader.", chart_data=[416.20, 417.30, 419.00, 420.50, 421.00, 421.20, 421.80]),
-    Stock(id=3, symbol="GOOGL", name="Alphabet Inc.", price=175.30, change=-0.5, change_amount=-0.88, market_cap="1.1T", volume="28.4M", high_52w=195.00, low_52w=102.21, pe_ratio=25.6, dividend_yield=0.0, description="Search engine and advertising giant with AI innovations.", chart_data=[176.50, 176.00, 175.80, 175.50, 175.40, 175.35, 175.30]),
-    Stock(id=4, symbol="AMZN", name="Amazon.com Inc.", price=188.45, change=3.2, change_amount=5.80, market_cap="1.8T", volume="42.1M", high_52w=199.87, low_52w=81.43, pe_ratio=64.3, dividend_yield=0.0, description="E-commerce and cloud computing leader AWS.", chart_data=[182.00, 183.50, 185.20, 186.80, 187.50, 188.00, 188.45]),
-    Stock(id=5, symbol="TSLA", name="Tesla Inc.", price=245.67, change=5.1, change_amount=12.50, market_cap="780B", volume="134.2M", high_52w=299.29, low_52w=101.81, pe_ratio=68.9, dividend_yield=0.0, description="Electric vehicles and renewable energy company.", chart_data=[235.00, 237.50, 240.00, 242.50, 243.80, 244.50, 245.67]),
-    Stock(id=6, symbol="META", name="Meta Platforms Inc.", price=512.45, change=4.3, change_amount=21.10, market_cap="1.3T", volume="12.5M", high_52w=545.00, low_52w=88.09, pe_ratio=22.1, dividend_yield=0.0, description="Social media and metaverse technology company.", chart_data=[490.00, 495.20, 500.50, 505.80, 510.00, 511.50, 512.45]),
-]
-
-FOREX_PAIRS = [
-    ForexPair(id=1, symbol="EUR/USD", name="Euro/US Dollar", rate=1.0950, bid=1.0948, ask=1.0952, change=0.35, change_percent=0.32, high=1.1050, low=1.0850, description="World's most traded currency pair", chart_data=[1.0920, 1.0925, 1.0935, 1.0940, 1.0945, 1.0948, 1.0950]),
-    ForexPair(id=2, symbol="GBP/USD", name="British Pound/US Dollar", rate=1.2750, bid=1.2748, ask=1.2752, change=0.15, change_percent=0.12, high=1.2950, low=1.2550, description="Second most traded currency pair", chart_data=[1.2720, 1.2725, 1.2735, 1.2740, 1.2745, 1.2748, 1.2750]),
-    ForexPair(id=3, symbol="USD/JPY", name="US Dollar/Japanese Yen", rate=147.85, bid=147.83, ask=147.87, change=-0.50, change_percent=-0.34, high=152.50, low=145.00, description="Major currency pair with safe-haven status", chart_data=[148.20, 148.10, 148.00, 147.95, 147.90, 147.87, 147.85]),
-    ForexPair(id=4, symbol="AUD/USD", name="Australian Dollar/US Dollar", rate=0.6820, bid=0.6818, ask=0.6822, change=0.25, change_percent=0.37, high=0.7150, low=0.6500, description="Commodity-influenced currency pair", chart_data=[0.6800, 0.6805, 0.6810, 0.6815, 0.6818, 0.6819, 0.6820]),
-    ForexPair(id=5, symbol="USD/CNY", name="US Dollar/Chinese Yuan", rate=7.2450, bid=7.2440, ask=7.2460, change=-0.10, change_percent=-0.14, high=7.3500, low=6.9000, description="Emerging market currency pair", chart_data=[7.2550, 7.2520, 7.2490, 7.2470, 7.2460, 7.2455, 7.2450]),
-]
-
-PORTFOLIOS = {
-    1: Portfolio(id=1, user_id=1, total_value=50000.00, cash=12500.00, invested=37500.00, profit_loss=4200.50, profit_loss_percent=12.65),
-}
-
-PORTFOLIO_HOLDINGS = [
-    PortfolioHolding(id=1, portfolio_id=1, asset_symbol="AAPL", asset_name="Apple Inc.", quantity=50, buy_price=195.00, current_price=215.45, value=10772.50, profit_loss=1022.50, profit_loss_percent=10.50, type="stock"),
-    PortfolioHolding(id=2, portfolio_id=1, asset_symbol="MSFT", asset_name="Microsoft Corp.", quantity=30, buy_price=380.00, current_price=421.80, value=12654.00, profit_loss=1254.00, profit_loss_percent=11.00, type="stock"),
-    PortfolioHolding(id=3, portfolio_id=1, asset_symbol="EUR/USD", asset_name="Euro/US Dollar", quantity=1000, buy_price=1.0750, current_price=1.0950, value=1095.00, profit_loss=200.00, profit_loss_percent=18.60, type="forex"),
-]
-
-TRADES = [
-    Trade(id=1, user_id=1, symbol="AAPL", asset_name="Apple Inc.", type="buy", quantity=50, price=195.00, total_amount=9750.00, timestamp="2026-02-20 10:30 AM", asset_type="stock"),
-    Trade(id=2, user_id=1, symbol="MSFT", asset_name="Microsoft Corp.", type="buy", quantity=30, price=380.00, total_amount=11400.00, timestamp="2026-02-19 02:15 PM", asset_type="stock"),
-    Trade(id=3, user_id=1, symbol="EUR/USD", asset_name="Euro/US Dollar", type="buy", quantity=1000, price=1.0750, total_amount=1075.00, timestamp="2026-02-18 08:45 AM", asset_type="forex"),
-]
-
-WATCHLISTS = [
-    Watchlist(id=1, user_id=1, name="Tech Stocks", created_at="2026-01-15", items=[1, 2, 4, 6]),
-    Watchlist(id=2, user_id=1, name="Major Pairs", created_at="2026-02-01", items=[1, 2, 3]),
-]
+USERS: Dict[int, User] = {}
+SELLERS: List[Seller] = []
+PRODUCTS: List[Product] = []
+PRODUCTS_REVIEW: List[Review] = []
+POSTS: List[Post] = []
+MESSAGES: List[Message] = []
+STORIES: List[Story] = []
+STOCKS: List[Stock] = []
+FOREX_PAIRS: List[ForexPair] = []
+PORTFOLIOS: Dict[int, Portfolio] = {}
+PORTFOLIO_HOLDINGS: List[PortfolioHolding] = []
+TRADES: List[Trade] = []
+WATCHLISTS: List[Watchlist] = []
 
 CART = {}  # user_id -> list of CartItems
 ORDERS = []  # List of Order
 
+
+def _ensure_user_profile(user_id: int) -> Optional[User]:
+    existing = USERS.get(int(user_id))
+    if existing:
+        return existing
+
+    auth_user = get_user_by_id(int(user_id))
+    if not auth_user:
+        return None
+
+    username = str(auth_user.get("username") or f"user_{user_id}")
+    full_name = str(auth_user.get("full_name") or username)
+    avatar = f"https://ui-avatars.com/api/?name={urllib.parse.quote(full_name)}&background=2563eb&color=ffffff"
+    profile = User(
+        id=int(auth_user["id"]),
+        username=username,
+        name=full_name,
+        avatar=avatar,
+        bio="",
+        followers=0,
+        following=0,
+    )
+    USERS[profile.id] = profile
+    _persist_state(STATE_KEYS["users"], USERS)
+    return profile
+
+
 # User endpoints
 @app.get("/users/{user_id}", response_model=User)
 async def get_user(user_id: int):
-    return USERS.get(user_id, {"error": "User not found"})
+    profile = _ensure_user_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="User not found")
+    return profile
 
 @app.get("/users", response_model=List[User])
 async def list_users():
@@ -896,37 +912,7 @@ async def list_users():
 # Feed endpoints
 @app.get("/feed", response_model=List[Post])
 async def get_feed():
-    external_posts = _fetch_json("https://dummyjson.com/posts?limit=12")
-    external_users = _fetch_json("https://dummyjson.com/users?limit=30")
-    if isinstance(external_posts, dict) and isinstance(external_users, dict):
-        posts_payload = external_posts.get("posts", [])
-        users_payload = external_users.get("users", [])
-        if isinstance(posts_payload, list) and isinstance(users_payload, list) and posts_payload:
-            users_by_id = {u.get("id"): u for u in users_payload if isinstance(u, dict)}
-            live_feed: List[Post] = []
-            for item in posts_payload:
-                if not isinstance(item, dict):
-                    continue
-                user = users_by_id.get(item.get("userId"), {})
-                first = user.get("firstName", "User")
-                last = user.get("lastName", "")
-                username = user.get("username") or f"user_{item.get('userId', 0)}"
-                live_feed.append(
-                    Post(
-                        id=int(item.get("id", 0)),
-                        user_id=int(item.get("userId", 0)),
-                        username=str(username),
-                        avatar=f"https://ui-avatars.com/api/?name={urllib.parse.quote(str(first + ' ' + last).strip())}&background=2563eb&color=ffffff",
-                        content=str(item.get("body", "")),
-                        image=None,
-                        likes=int(item.get("reactions", 0)),
-                        comments=int(item.get("views", 0)) // 20,
-                        timestamp="Live",
-                    )
-                )
-            if live_feed:
-                return live_feed
-    return POSTS
+    return sorted(POSTS, key=lambda post: post.id, reverse=True)
 
 @app.post("/posts")
 async def create_post(
@@ -947,7 +933,7 @@ async def create_post(
             image=payload.image,
             likes=0,
             comments=0,
-            timestamp="Just now",
+            timestamp=_now_iso(),
         )
     )
     _persist_state(STATE_KEYS["posts"], POSTS)
@@ -993,10 +979,10 @@ async def send_message(
     payload: SendMessageRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    new_id = max([m.id for m in MESSAGES]) + 1
+    new_id = max((m.id for m in MESSAGES), default=0) + 1
     sender_id = int(current_user["id"])
     sender_name = str(current_user.get("full_name") or current_user.get("username") or "User")
-    stamp = datetime.now().strftime("%H:%M")
+    stamp = _now_iso()
     MESSAGES.append(
         Message(
             id=new_id,
@@ -1043,7 +1029,7 @@ async def upload_story(
     payload: StoryCreateRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    new_id = max([s.id for s in STORIES]) + 1
+    new_id = max((s.id for s in STORIES), default=0) + 1
     user_id = int(current_user["id"])
     username = str(current_user.get("username") or f"user_{user_id}")
     avatar = f"https://ui-avatars.com/api/?name={urllib.parse.quote(str(current_user.get('full_name') or username))}&background=2563eb&color=ffffff"
@@ -1125,7 +1111,7 @@ async def websocket_chat(user_id: int, websocket: WebSocket, token: str = Query(
                 continue
 
             new_id = max((m.id for m in MESSAGES), default=0) + 1
-            stamp = datetime.now().strftime("%H:%M")
+            stamp = _now_iso()
             sender_name = str(authed_user.get("full_name") or authed_user.get("username") or "User")
             message = Message(
                 id=new_id,
@@ -1150,42 +1136,6 @@ async def websocket_chat(user_id: int, websocket: WebSocket, token: str = Query(
 
 # Product endpoints
 def _catalog_products() -> List[Product]:
-    external = _fetch_json("https://dummyjson.com/products?limit=60")
-    if isinstance(external, dict):
-        payload = external.get("products", [])
-        if isinstance(payload, list) and payload:
-            live_products: List[Product] = []
-            for item in payload:
-                if not isinstance(item, dict):
-                    continue
-                item_id = int(item.get("id", 0))
-                seller = SELLERS[item_id % len(SELLERS)] if SELLERS else None
-                seller_id = seller.id if seller else 1
-                seller_name = seller.shop_name if seller else str(item.get("brand") or "Marketplace Seller")
-                seller_avatar = seller.shop_avatar if seller else "https://ui-avatars.com/api/?name=Seller&background=0f172a&color=ffffff"
-                live_products.append(
-                    Product(
-                        id=item_id,
-                        seller_id=seller_id,
-                        seller_name=seller_name,
-                        seller_avatar=seller_avatar,
-                        name=str(item.get("title", "Product")),
-                        description=str(item.get("description", "")),
-                        price=float(item.get("price", 0)),
-                        original_price=float(item.get("price", 0)) / max(0.01, (1 - float(item.get("discountPercentage", 0)) / 100)),
-                        image=str(item.get("thumbnail", "https://via.placeholder.com/300")),
-                        images=item.get("images") if isinstance(item.get("images"), list) else [],
-                        category=str(item.get("category", "General")),
-                        rating=float(item.get("rating", 4.0)),
-                        reviews=int(item.get("stock", 0)) + 20,
-                        sold=int(item.get("stock", 0)) * 3,
-                        stock=int(item.get("stock", 0)),
-                        shipping_cost=0 if float(item.get("price", 0)) >= 50 else 4.99,
-                        estimated_delivery="3-6 days",
-                    )
-                )
-            if live_products:
-                return live_products
     return PRODUCTS
 
 
@@ -1204,7 +1154,7 @@ async def get_product(product_id: int):
     for product in _catalog_products():
         if product.id == product_id:
             return product
-    return {"error": "Product not found"}
+    raise HTTPException(status_code=404, detail="Product not found")
 
 @app.get("/products/{product_id}/reviews", response_model=List[Review])
 async def get_product_reviews(product_id: int):
@@ -1227,7 +1177,7 @@ async def get_seller(seller_id: int):
     for seller in SELLERS:
         if seller.id == seller_id:
             return seller
-    return {"error": "Seller not found"}
+    raise HTTPException(status_code=404, detail="Seller not found")
 
 @app.get("/sellers/{seller_id}/products", response_model=List[Product])
 async def get_seller_products(seller_id: int):
@@ -1290,7 +1240,7 @@ async def checkout(
             return {"error": "Payment amount is lower than checkout total"}
         payment_status = matched["status"]
 
-    order_id = max([o.id for o in ORDERS]) + 1 if ORDERS else 1
+    order_id = max((o.id for o in ORDERS), default=0) + 1
     order = Order(
         id=order_id,
         user_id=user_id,
@@ -1298,7 +1248,7 @@ async def checkout(
         total_price=total,
         shipping_address=payload.address,
         status=OrderStatus.PENDING,
-        created_at="Now",
+        created_at=_now_iso(),
         estimated_delivery="3-5 business days"
     )
     ORDERS.append(order)
@@ -1357,7 +1307,7 @@ async def get_stock(stock_id: int):
     for stock in stocks:
         if stock.id == stock_id:
             return stock
-    return {"error": "Stock not found"}
+    raise HTTPException(status_code=404, detail="Stock not found")
 
 @app.get("/stocks/symbol/{symbol}", response_model=Stock)
 async def get_stock_by_symbol(symbol: str):
@@ -1365,7 +1315,7 @@ async def get_stock_by_symbol(symbol: str):
     for stock in stocks:
         if stock.symbol.upper() == symbol.upper():
             return stock
-    return {"error": "Stock not found"}
+    raise HTTPException(status_code=404, detail="Stock not found")
 
 
 @app.get("/stocks/symbol/{symbol}/chart")
@@ -1394,20 +1344,34 @@ async def get_forex_pair(pair_id: int):
     for pair in FOREX_PAIRS:
         if pair.id == pair_id:
             return pair
-    return {"error": "Forex pair not found"}
+    raise HTTPException(status_code=404, detail="Forex pair not found")
 
 @app.get("/forex/symbol/{symbol}", response_model=ForexPair)
 async def get_forex_by_symbol(symbol: str):
     for pair in FOREX_PAIRS:
         if pair.symbol.upper() == symbol.upper():
             return pair
-    return {"error": "Forex pair not found"}
+    raise HTTPException(status_code=404, detail="Forex pair not found")
 
 # Portfolio endpoints
 @app.get("/portfolio/{user_id}", response_model=Portfolio)
 async def get_portfolio(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
     _require_user_access(user_id, current_user)
-    return PORTFOLIOS.get(user_id, {"error": "Portfolio not found"})
+    portfolio = PORTFOLIOS.get(user_id)
+    if portfolio:
+        return portfolio
+    created = Portfolio(
+        id=max((p.id for p in PORTFOLIOS.values()), default=0) + 1,
+        user_id=user_id,
+        total_value=10000.0,
+        cash=10000.0,
+        invested=0.0,
+        profit_loss=0.0,
+        profit_loss_percent=0.0,
+    )
+    PORTFOLIOS[user_id] = created
+    _persist_state(STATE_KEYS["portfolios"], PORTFOLIOS)
+    return created
 
 @app.get("/portfolio/{user_id}/holdings")
 async def get_portfolio_holdings(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
@@ -1423,8 +1387,8 @@ async def get_watchlists(user_id: int, current_user: Dict[str, Any] = Depends(ge
 @app.post("/watchlists/{user_id}")
 async def create_watchlist(user_id: int, name: str, current_user: Dict[str, Any] = Depends(get_current_user)):
     _require_user_access(user_id, current_user)
-    new_id = max([w.id for w in WATCHLISTS]) + 1 if WATCHLISTS else 1
-    watchlist = Watchlist(id=new_id, user_id=user_id, name=name, created_at="2026-02-22", items=[])
+    new_id = max((w.id for w in WATCHLISTS), default=0) + 1
+    watchlist = Watchlist(id=new_id, user_id=user_id, name=name, created_at=_now_iso(), items=[])
     WATCHLISTS.append(watchlist)
     _persist_state(STATE_KEYS["watchlists"], WATCHLISTS)
     return {"success": True, "watchlist_id": new_id}
@@ -1455,7 +1419,7 @@ async def execute_buy_trade(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     _require_user_access(user_id, current_user)
-    new_id = max([t.id for t in TRADES]) + 1 if TRADES else 1
+    new_id = max((t.id for t in TRADES), default=0) + 1
     total = quantity * price
     trade = Trade(
         id=new_id,
@@ -1466,7 +1430,7 @@ async def execute_buy_trade(
         quantity=quantity,
         price=price,
         total_amount=total,
-        timestamp="Now",
+        timestamp=_now_iso(),
         asset_type=asset_type
     )
     TRADES.append(trade)
@@ -1491,7 +1455,7 @@ async def execute_sell_trade(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     _require_user_access(user_id, current_user)
-    new_id = max([t.id for t in TRADES]) + 1 if TRADES else 1
+    new_id = max((t.id for t in TRADES), default=0) + 1
     total = quantity * price
     trade = Trade(
         id=new_id,
@@ -1502,7 +1466,7 @@ async def execute_sell_trade(
         quantity=quantity,
         price=price,
         total_amount=total,
-        timestamp="Now",
+        timestamp=_now_iso(),
         asset_type=asset_type
     )
     TRADES.append(trade)
@@ -1608,68 +1572,18 @@ class Settings(BaseModel):
     created_at: str
 
 
-# Mock Data
-NOTIFICATIONS = [
-    {"id": 1, "user_id": 1, "title": "Order Confirmed", "message": "Your order #101 has been confirmed", "type": "order", "read": False, "created_at": "2026-02-22T09:00:00"},
-    {"id": 2, "user_id": 1, "title": "New Follower", "message": "jane_smith started following you", "type": "follow", "read": True, "created_at": "2026-02-22T08:30:00"},
-    {"id": 3, "user_id": 1, "title": "Trade Alert", "message": "Your stock AAPL gained 5%", "type": "trading", "read": False, "created_at": "2026-02-22T08:00:00"},
-]
-
-REVIEWS = [
-    {"id": 1, "product_id": 1, "user_id": 2, "username": "jane_smith", "rating": 5, "comment": "Excellent quality, fast shipping!", "helpful_count": 12, "created_at": "2026-02-20"},
-    {"id": 2, "product_id": 1, "user_id": 3, "username": "mike_tech", "rating": 4, "comment": "Good product, packaging could be better", "helpful_count": 8, "created_at": "2026-02-19"},
-]
-
-WISHLISTS = [
-    {"id": 1, "user_id": 1, "product_id": 2, "added_at": "2026-02-21"},
-    {"id": 2, "user_id": 1, "product_id": 3, "added_at": "2026-02-20"},
-]
-
-WALLETS = [
-    {"id": 1, "user_id": 1, "balance": 2500.50, "total_spent": 5200.00, "total_earned": 1200.00, "created_at": "2026-01-01"},
-    {"id": 2, "user_id": 2, "balance": 3100.00, "total_spent": 4500.00, "total_earned": 3500.00, "created_at": "2026-01-01"},
-]
-
-CHAT_MESSAGES = [
-    {"id": 1, "user_id": 1, "seller_id": 101, "message": "Is this product available?", "timestamp": "2026-02-22T10:00:00", "read": True},
-    {"id": 2, "user_id": 1, "seller_id": 101, "message": "Yes, it's in stock!", "timestamp": "2026-02-22T10:05:00", "read": False},
-]
-
-FOLLOWS = [
-    {"id": 1, "follower_id": 1, "following_id": 2, "created_at": "2026-02-18"},
-    {"id": 2, "follower_id": 1, "following_id": 3, "created_at": "2026-02-17"},
-    {"id": 3, "follower_id": 2, "following_id": 1, "created_at": "2026-02-16"},
-]
-
-CRYPTOCURRENCIES = [
-    {"id": 1, "symbol": "BTC", "name": "Bitcoin", "price": 43560.00, "change": 1250.00, "change_percent": 2.96, "market_cap": "$850B", "volume": "$28B"},
-    {"id": 2, "symbol": "ETH", "name": "Ethereum", "price": 2280.50, "change": 85.50, "change_percent": 3.89, "market_cap": "$273B", "volume": "$12B"},
-    {"id": 3, "symbol": "XRP", "name": "Ripple", "price": 2.45, "change": -0.05, "change_percent": -2.0, "market_cap": "$130B", "volume": "$2.5B"},
-    {"id": 4, "symbol": "ADA", "name": "Cardano", "price": 0.95, "change": 0.02, "change_percent": 2.15, "market_cap": "$35B", "volume": "$500M"},
-]
-
-COPY_TRADERS = [
-    {"id": 1, "trader_id": 101, "trader_name": "Pro_Trader_Mike", "followers": 1250, "win_rate": 82.5, "roi": 185.3, "total_trades": 320, "created_at": "2025-06-01"},
-    {"id": 2, "trader_id": 102, "trader_name": "Sarah_FX_Expert", "followers": 890, "win_rate": 76.2, "roi": 142.8, "total_trades": 215, "created_at": "2025-08-15"},
-    {"id": 3, "trader_id": 103, "trader_name": "Crypto_King_Alex", "followers": 2100, "win_rate": 71.5, "roi": 298.5, "total_trades": 450, "created_at": "2025-04-20"},
-]
-
-LOYALTY_POINTS = [
-    {"id": 1, "user_id": 1, "points": 2850, "tier": "gold", "created_at": "2026-01-01"},
-    {"id": 2, "user_id": 2, "points": 1200, "tier": "silver", "created_at": "2026-01-01"},
-    {"id": 3, "user_id": 3, "points": 5600, "tier": "platinum", "created_at": "2026-01-01"},
-]
-
-ANALYTICS_DATA = [
-    {"id": 1, "user_id": 101, "type": "seller_sales", "data": {"total_sales": 15000, "orders": 342, "revenue": 8500, "avg_rating": 4.7}, "timestamp": "2026-02-22"},
-    {"id": 2, "user_id": 1, "type": "user_spending", "data": {"total_spent": 5200, "orders": 28, "avg_order": 185.71, "favorite_category": "Electronics"}, "timestamp": "2026-02-22"},
-    {"id": 3, "user_id": 1, "type": "trade_performance", "data": {"total_trades": 45, "win_trades": 32, "loss_trades": 13, "roi": 18.5}, "timestamp": "2026-02-22"},
-]
-
-SETTINGS_DATA = [
-    {"id": 1, "user_id": 1, "dark_mode": False, "language": "en", "notifications_enabled": True, "created_at": "2026-01-01"},
-    {"id": 2, "user_id": 2, "dark_mode": True, "language": "es", "notifications_enabled": True, "created_at": "2026-01-01"},
-]
+# Runtime data stores (persisted in state DB)
+NOTIFICATIONS: List[Dict[str, Any]] = []
+REVIEWS: List[Dict[str, Any]] = []
+WISHLISTS: List[Dict[str, Any]] = []
+WALLETS: List[Dict[str, Any]] = []
+CHAT_MESSAGES: List[Dict[str, Any]] = []
+FOLLOWS: List[Dict[str, Any]] = []
+CRYPTOCURRENCIES: List[Dict[str, Any]] = []
+COPY_TRADERS: List[Dict[str, Any]] = []
+LOYALTY_POINTS: List[Dict[str, Any]] = []
+ANALYTICS_DATA: List[Dict[str, Any]] = []
+SETTINGS_DATA: List[Dict[str, Any]] = []
 
 PAYMENT_INTENTS: List[Dict[str, Any]] = []
 
@@ -1677,11 +1591,25 @@ LIVE_SHOPPING_EVENTS: List[Dict[str, Any]] = []
 
 SUPPORT_MESSAGES: List[Dict[str, Any]] = []
 
-OPTIONS_CONTRACTS: List[Dict[str, Any]] = [
-    {"id": 1, "symbol": "AAPL260320C00220000", "underlying": "AAPL", "type": "call", "strike": 220.0, "expiry": "2026-03-20", "premium": 4.15},
-    {"id": 2, "symbol": "MSFT260320P00400000", "underlying": "MSFT", "type": "put", "strike": 400.0, "expiry": "2026-03-20", "premium": 5.80},
-    {"id": 3, "symbol": "NVDA260320C00950000", "underlying": "NVDA", "type": "call", "strike": 950.0, "expiry": "2026-03-20", "premium": 12.25},
-]
+OPTIONS_CONTRACTS: List[Dict[str, Any]] = []
+
+
+def _get_or_create_wallet(user_id: int) -> Dict[str, Any]:
+    for wallet in WALLETS:
+        if int(wallet.get("user_id", 0)) == int(user_id):
+            return wallet
+    wallet = {
+        "id": max((int(w.get("id", 0)) for w in WALLETS), default=0) + 1,
+        "user_id": int(user_id),
+        "balance": 0.0,
+        "total_spent": 0.0,
+        "total_earned": 0.0,
+        "created_at": _now_iso(),
+    }
+    WALLETS.append(wallet)
+    _persist_state(STATE_KEYS["wallets"], WALLETS)
+    return wallet
+
 
 # Notification endpoints
 @app.get("/notifications/{user_id}")
@@ -1716,8 +1644,17 @@ async def get_product_community_reviews(product_id: int):
 
 @app.post("/products/{product_id}/community-reviews")
 async def add_product_community_review(product_id: int, user_id: int, username: str, rating: int, comment: str):
-    new_id = max([r["id"] for r in REVIEWS]) + 1 if REVIEWS else 1
-    review = {"id": new_id, "product_id": product_id, "user_id": user_id, "username": username, "rating": rating, "comment": comment, "helpful_count": 0, "created_at": "2026-02-22"}
+    new_id = max((int(r["id"]) for r in REVIEWS), default=0) + 1
+    review = {
+        "id": new_id,
+        "product_id": product_id,
+        "user_id": user_id,
+        "username": username,
+        "rating": rating,
+        "comment": comment,
+        "helpful_count": 0,
+        "created_at": _now_iso(),
+    }
     REVIEWS.append(review)
     _persist_state(STATE_KEYS["reviews"], REVIEWS)
     return {"success": True, "review_id": new_id}
@@ -1752,8 +1689,8 @@ async def add_to_wishlist(
 ):
     _require_user_access(user_id, current_user)
     if not any(w["user_id"] == user_id and w["product_id"] == product_id for w in WISHLISTS):
-        new_id = max([w["id"] for w in WISHLISTS]) + 1 if WISHLISTS else 1
-        wishlist = {"id": new_id, "user_id": user_id, "product_id": product_id, "added_at": "2026-02-22"}
+        new_id = max((int(w["id"]) for w in WISHLISTS), default=0) + 1
+        wishlist = {"id": new_id, "user_id": user_id, "product_id": product_id, "added_at": _now_iso()}
         WISHLISTS.append(wishlist)
         _persist_state(STATE_KEYS["wishlists"], WISHLISTS)
         return {"success": True, "wishlist_id": new_id}
@@ -1775,10 +1712,7 @@ async def remove_from_wishlist(
 @app.get("/wallet/{user_id}")
 async def get_wallet(user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
     _require_user_access(user_id, current_user)
-    for wallet in WALLETS:
-        if wallet["user_id"] == user_id:
-            return wallet
-    return {"error": "Wallet not found"}
+    return _get_or_create_wallet(user_id)
 
 @app.post("/wallet/{user_id}/deposit")
 async def deposit_to_wallet(
@@ -1788,13 +1722,13 @@ async def deposit_to_wallet(
 ):
     _require_user_access(user_id, current_user)
     amount = payload.amount
-    for wallet in WALLETS:
-        if wallet["user_id"] == user_id:
-            wallet["balance"] += amount
-            wallet["total_earned"] += amount
-            _persist_state(STATE_KEYS["wallets"], WALLETS)
-            return {"success": True, "new_balance": wallet["balance"]}
-    return {"error": "Wallet not found"}
+    if amount <= 0:
+        return {"error": "Amount must be greater than zero"}
+    wallet = _get_or_create_wallet(user_id)
+    wallet["balance"] += amount
+    wallet["total_earned"] += amount
+    _persist_state(STATE_KEYS["wallets"], WALLETS)
+    return {"success": True, "new_balance": wallet["balance"]}
 
 @app.post("/wallet/{user_id}/withdraw")
 async def withdraw_from_wallet(
@@ -1804,15 +1738,15 @@ async def withdraw_from_wallet(
 ):
     _require_user_access(user_id, current_user)
     amount = payload.amount
-    for wallet in WALLETS:
-        if wallet["user_id"] == user_id:
-            if wallet["balance"] >= amount:
-                wallet["balance"] -= amount
-                wallet["total_spent"] += amount
-                _persist_state(STATE_KEYS["wallets"], WALLETS)
-                return {"success": True, "new_balance": wallet["balance"]}
-            return {"error": "Insufficient balance"}
-    return {"error": "Wallet not found"}
+    if amount <= 0:
+        return {"error": "Amount must be greater than zero"}
+    wallet = _get_or_create_wallet(user_id)
+    if wallet["balance"] >= amount:
+        wallet["balance"] -= amount
+        wallet["total_spent"] += amount
+        _persist_state(STATE_KEYS["wallets"], WALLETS)
+        return {"success": True, "new_balance": wallet["balance"]}
+    return {"error": "Insufficient balance"}
 
 # Chat endpoints
 @app.get("/chat/{user_id}/{seller_id}")
@@ -1832,13 +1766,13 @@ async def send_chat_message(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     _require_user_access(user_id, current_user)
-    new_id = max([m["id"] for m in CHAT_MESSAGES]) + 1 if CHAT_MESSAGES else 1
+    new_id = max((int(m["id"]) for m in CHAT_MESSAGES), default=0) + 1
     msg = {
         "id": new_id,
         "user_id": user_id,
         "seller_id": seller_id,
         "message": payload.message,
-        "timestamp": "2026-02-22T10:00:00",
+        "timestamp": _now_iso(),
         "read": False,
     }
     CHAT_MESSAGES.append(msg)
@@ -1864,8 +1798,8 @@ async def follow_user(
 ):
     _require_user_access(follower_id, current_user)
     if not any(f["follower_id"] == follower_id and f["following_id"] == following_id for f in FOLLOWS):
-        new_id = max([f["id"] for f in FOLLOWS]) + 1 if FOLLOWS else 1
-        follow = {"id": new_id, "follower_id": follower_id, "following_id": following_id, "created_at": "2026-02-22"}
+        new_id = max((int(f["id"]) for f in FOLLOWS), default=0) + 1
+        follow = {"id": new_id, "follower_id": follower_id, "following_id": following_id, "created_at": _now_iso()}
         FOLLOWS.append(follow)
         _persist_state(STATE_KEYS["follows"], FOLLOWS)
         return {"success": True, "follow_id": new_id}
@@ -2356,7 +2290,16 @@ async def trade_options(
     total = float(payload.contracts) * float(payload.premium) * 100.0
     portfolio = PORTFOLIOS.get(payload.user_id)
     if not portfolio:
-        return {"error": "Portfolio not found"}
+        portfolio = Portfolio(
+            id=max((p.id for p in PORTFOLIOS.values()), default=0) + 1,
+            user_id=payload.user_id,
+            total_value=10000.0,
+            cash=10000.0,
+            invested=0.0,
+            profit_loss=0.0,
+            profit_loss_percent=0.0,
+        )
+        PORTFOLIOS[payload.user_id] = portfolio
 
     if side == "buy":
         if portfolio.cash < total:
@@ -2386,6 +2329,224 @@ async def trade_options(
     _persist_state(STATE_KEYS["portfolios"], PORTFOLIOS)
     _persist_state(STATE_KEYS["trades"], TRADES)
     return {"success": True, "trade_id": trade_id, "side": side, "total_amount": total}
+
+
+@app.get("/map/geocode")
+async def map_geocode(q: str = Query(..., min_length=2), limit: int = Query(default=8, ge=1, le=30)):
+    query_text = q.strip()
+    if not query_text:
+        return []
+
+    params = urllib.parse.urlencode(
+        {
+            "q": query_text,
+            "format": "jsonv2",
+            "addressdetails": 1,
+            "limit": str(limit),
+        }
+    )
+    url = f"{NOMINATIM_BASE_URL}/search?{params}"
+    payload = _fetch_json(url, headers={"User-Agent": NOMINATIM_USER_AGENT})
+    if not isinstance(payload, list):
+        return []
+
+    results = []
+    for idx, item in enumerate(payload, start=1):
+        if not isinstance(item, dict):
+            continue
+        try:
+            lat = float(item.get("lat", 0))
+            lon = float(item.get("lon", 0))
+        except Exception:
+            continue
+        results.append(
+            {
+                "id": f"geo_{idx}",
+                "title": str(item.get("name") or item.get("display_name") or query_text),
+                "subtitle": str(item.get("display_name") or ""),
+                "lat": lat,
+                "lon": lon,
+                "type": str(item.get("type") or "location"),
+            }
+        )
+    return results
+
+
+@app.get("/map/nearby")
+async def map_nearby(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    radius_m: int = Query(default=2500, ge=100, le=15000),
+    limit: int = Query(default=24, ge=1, le=100),
+):
+    overpass_query = f"""
+[out:json][timeout:25];
+(
+  node(around:{radius_m},{lat},{lon})["shop"];
+  node(around:{radius_m},{lat},{lon})["amenity"~"marketplace|supermarket|mall|restaurant|cafe|bank|pharmacy|fuel"];
+);
+out body {limit};
+"""
+    payload = _fetch_json_post(OVERPASS_API_URL, {"data": overpass_query.strip()})
+    if not isinstance(payload, dict):
+        return []
+
+    elements = payload.get("elements", [])
+    if not isinstance(elements, list):
+        return []
+
+    places = []
+    for element in elements[:limit]:
+        if not isinstance(element, dict):
+            continue
+        tags = element.get("tags", {}) if isinstance(element.get("tags"), dict) else {}
+        try:
+            place_lat = float(element.get("lat", 0))
+            place_lon = float(element.get("lon", 0))
+        except Exception:
+            continue
+        if place_lat == 0 and place_lon == 0:
+            continue
+
+        category = str(tags.get("shop") or tags.get("amenity") or "place")
+        name = str(tags.get("name") or category.replace("_", " ").title())
+        dist_km = _haversine_km(lat, lon, place_lat, place_lon)
+        places.append(
+            {
+                "id": f"poi_{element.get('id')}",
+                "title": name,
+                "subtitle": str(tags.get("addr:street") or tags.get("brand") or category),
+                "category": category,
+                "lat": place_lat,
+                "lon": place_lon,
+                "distance_km": round(dist_km, 2),
+            }
+        )
+
+    places.sort(key=lambda item: float(item.get("distance_km", 0)))
+    return places[:limit]
+
+
+@app.get("/map/route")
+async def map_route(
+    start_lat: float = Query(..., ge=-90, le=90),
+    start_lon: float = Query(..., ge=-180, le=180),
+    end_lat: float = Query(..., ge=-90, le=90),
+    end_lon: float = Query(..., ge=-180, le=180),
+    profile: str = Query(default="driving"),
+):
+    safe_profile = profile.strip().lower()
+    if safe_profile not in {"driving", "walking", "cycling"}:
+        safe_profile = "driving"
+
+    url = (
+        f"{OSRM_BASE_URL}/route/v1/{urllib.parse.quote(safe_profile)}"
+        f"/{start_lon},{start_lat};{end_lon},{end_lat}"
+        "?overview=false&alternatives=false&steps=false"
+    )
+    payload = _fetch_json(url)
+    if not isinstance(payload, dict) or str(payload.get("code")) != "Ok":
+        return {
+            "error": "Route unavailable",
+            "profile": safe_profile,
+            "distance_km": round(_haversine_km(start_lat, start_lon, end_lat, end_lon), 2),
+            "duration_minutes": None,
+        }
+
+    routes = payload.get("routes", [])
+    if not isinstance(routes, list) or not routes:
+        return {"error": "Route unavailable", "profile": safe_profile}
+
+    route = routes[0] if isinstance(routes[0], dict) else {}
+    distance_m = float(route.get("distance", 0) or 0)
+    duration_s = float(route.get("duration", 0) or 0)
+    return {
+        "profile": safe_profile,
+        "distance_km": round(distance_m / 1000.0, 2),
+        "duration_minutes": round(duration_s / 60.0, 1),
+        "eta_minutes": max(1, int(round(duration_s / 60.0))) if duration_s > 0 else None,
+    }
+
+
+@app.get("/mini-apps/weather")
+async def mini_apps_weather(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    timezone: str = Query(default="auto"),
+):
+    params = urllib.parse.urlencode(
+        {
+            "latitude": str(lat),
+            "longitude": str(lon),
+            "current_weather": "true",
+            "hourly": "temperature_2m,precipitation_probability",
+            "forecast_days": "1",
+            "timezone": timezone or "auto",
+        }
+    )
+    payload = _fetch_json(f"{OPENMETEO_BASE_URL}/forecast?{params}")
+    if not isinstance(payload, dict):
+        return {"error": "Weather unavailable"}
+
+    current = payload.get("current_weather", {}) if isinstance(payload.get("current_weather"), dict) else {}
+    hourly = payload.get("hourly", {}) if isinstance(payload.get("hourly"), dict) else {}
+    temps = hourly.get("temperature_2m", []) if isinstance(hourly.get("temperature_2m"), list) else []
+    precip = (
+        hourly.get("precipitation_probability", [])
+        if isinstance(hourly.get("precipitation_probability"), list)
+        else []
+    )
+
+    return {
+        "source": "open-meteo",
+        "lat": lat,
+        "lon": lon,
+        "temperature_c": current.get("temperature"),
+        "windspeed_kmh": current.get("windspeed"),
+        "weather_code": current.get("weathercode"),
+        "next_temp_c": temps[1] if len(temps) > 1 else None,
+        "next_precip_prob": precip[1] if len(precip) > 1 else None,
+        "time": current.get("time"),
+    }
+
+
+@app.get("/mini-apps/fx")
+async def mini_apps_fx(base: str = "USD", symbols: str = "EUR,GBP,NGN"):
+    base_currency = base.strip().upper() or "USD"
+    targets = [part.strip().upper() for part in symbols.split(",") if part.strip()]
+    targets = [code for code in targets if len(code) == 3 and code.isalpha()]
+    if not targets:
+        targets = ["EUR", "GBP"]
+
+    params = urllib.parse.urlencode({"from": base_currency, "to": ",".join(targets)})
+    payload = _fetch_json(f"{FRANKFURTER_API_URL}/latest?{params}")
+    if not isinstance(payload, dict):
+        return {"error": "FX rates unavailable", "base": base_currency, "symbols": targets}
+
+    rates = payload.get("rates", {}) if isinstance(payload.get("rates"), dict) else {}
+    return {
+        "source": "frankfurter",
+        "base": str(payload.get("base") or base_currency),
+        "date": payload.get("date"),
+        "rates": rates,
+    }
+
+
+@app.get("/mini-apps/time")
+async def mini_apps_time(timezone: str = "America/New_York"):
+    safe_timezone = urllib.parse.quote((timezone or "America/New_York").strip(), safe="/")
+    payload = _fetch_json(f"{WORLDTIME_API_URL}/timezone/{safe_timezone}")
+    if not isinstance(payload, dict):
+        return {"error": "Time service unavailable", "timezone": timezone}
+    return {
+        "timezone": payload.get("timezone"),
+        "datetime": payload.get("datetime"),
+        "utc_offset": payload.get("utc_offset"),
+        "day_of_week": payload.get("day_of_week"),
+        "day_of_year": payload.get("day_of_year"),
+        "week_number": payload.get("week_number"),
+        "dst": payload.get("dst"),
+    }
 
 
 @app.get("/external/news")
@@ -2447,6 +2608,8 @@ async def root():
             "Crypto",
             "Options",
             "Trading",
+            "Map",
+            "Mini Apps",
         ],
     }
 
