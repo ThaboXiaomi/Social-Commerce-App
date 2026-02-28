@@ -4,7 +4,7 @@ Run with: pytest backend/tests/test_auth_db.py
 """
 import pytest
 from datetime import datetime, timezone
-from auth_db import (
+from backend.auth_db import (
     hash_password,
     verify_password,
     create_user,

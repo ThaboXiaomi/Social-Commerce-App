@@ -4,7 +4,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from main import app
+from backend.main import app
 
 
 client = TestClient(app)
@@ -169,3 +169,13 @@ def test_websocket_chat_realtime_delivery():
             assert incoming["type"] == "message"
             assert incoming["message"]["content"] == "hello realtime"
             assert int(incoming["message"]["receiver_id"]) == user2
+
+
+def test_list_users_pagination():
+    # ensure there are at least a couple of users (demo is seeded)
+    resp = client.get("/users?page=1&per_page=2")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "items" in body and isinstance(body["items"], list)
+    assert body["page"] == 1
+    assert body["per_page"] == 2

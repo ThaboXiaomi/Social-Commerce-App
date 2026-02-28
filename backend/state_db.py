@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-DB_PATH = Path(__file__).resolve().parent / "unihub_state.db"
+try:
+    from .settings import settings
+except ImportError:
+    from settings import settings
+
+DB_PATH = Path(settings.db_state_path)
 
 
 def _conn() -> sqlite3.Connection:

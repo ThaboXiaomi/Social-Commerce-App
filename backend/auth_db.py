@@ -9,7 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 
-DB_PATH = Path(__file__).resolve().parent / "unihub_auth.db"
+try:
+    from .settings import settings
+except ImportError:
+    from settings import settings
+
+DB_PATH = Path(settings.db_auth_path)
 
 
 def _get_conn() -> sqlite3.Connection:

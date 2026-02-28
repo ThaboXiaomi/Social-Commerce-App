@@ -81,6 +81,19 @@ All 12 recommended platform improvements have been implemented:
 
 ## Backend Setup
 
+*Configuration* – all backend settings are managed via the `backend/settings.py`
+`Settings` class and can be overridden with environment variables or an `.env`
+file.  Common variables include:
+
+```bash
+MEDIA_BASE_URL=http://localhost:8000
+CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081
+LIVE_STOCK_SYMBOLS=AAPL,MSFT,GOOGL,...
+```
+
+You can inspect `backend/settings.py` for the full list.
+
+
 ```bash
 # Navigate to backend
 cd backend
@@ -101,6 +114,7 @@ Server runs on: `http://localhost:8000`
 
 **Social Media:**
 - `GET /feed` - Get posts
+- `GET /users` - List registered users (supports `page`/`per_page` query parameters)
 - `POST /posts` - Create post
 - `POST /posts/{id}/like` - Like post
 - `GET /messages` - Get messages

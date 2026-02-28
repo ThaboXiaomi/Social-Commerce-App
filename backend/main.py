@@ -1,48 +1,82 @@
-﻿from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from typing import Any, Dict, List, Optional
-from datetime import datetime
-from enum import Enum
-from pathlib import Path
-from uuid import uuid4
+﻿import logging
+import time
 import math
+from functools import lru_cache
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
 import os
 import urllib.parse
 import urllib.request
 import json
+from pathlib import Path
+from datetime import datetime
+from enum import Enum
 
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from contextlib import asynccontextmanager
+
+# unified import strategy: try relative (package), fall back to absolute (direct run)
 try:
+    from . import auth_routes, utils
     from .auth_db import get_user_by_id, init_auth_db, get_all_users
     from .auth_routes import get_current_user, router as auth_router
     from .auth_tokens import decode_token
     from .state_db import get_state, init_state_db, seed_state, set_state
+    from .chat import ChatConnectionManager
+    from .settings import settings
 except ImportError:
-    from auth_db import get_user_by_id, init_auth_db
+    import auth_routes, utils
+    from auth_db import get_user_by_id, init_auth_db, get_all_users
     from auth_routes import get_current_user, router as auth_router
     from auth_tokens import decode_token
     from state_db import get_state, init_state_db, seed_state, set_state
+    from chat import ChatConnectionManager
+    from settings import settings
 
-app = FastAPI(title="UniHub API", description="Social Media + E-Commerce (Amazon, Temu, Facebook Marketplace style)")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # initialize databases and in-memory state on startup
+    init_auth_db()
+    init_state_db()
+    _hydrate_all_state()
+    _remove_legacy_seeded_mock_data()
+
+    # sync auth DB users into USERS dict (non-fatal)
+    try:
+        auth_users = get_all_users()
+        for u in auth_users:
+            uid = int(u.get("id", 0) or 0)
+            if uid and uid not in USERS:
+                username = str(u.get("username") or f"user_{uid}")
+                full_name = str(u.get("full_name") or username)
+                avatar = f"https://ui-avatars.com/api/?name={urllib.parse.quote(full_name)}&background=2563eb&color=ffffff"
+                USERS[uid] = User(id=uid, username=username, name=full_name, avatar=avatar, bio="", followers=0, following=0)
+        _persist_state(STATE_KEYS["users"], USERS)
+    except Exception:
+        pass
+
+    yield
+
+
+app = FastAPI(title="UniHub API", description="Social Media + E-Commerce (Amazon, Temu, Facebook Marketplace style)", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8081",
-        "http://127.0.0.1:8081",
-        "http://localhost:19006",
-        "http://127.0.0.1:19006",
-    ],
+    allow_origins=[str(origin) for origin in settings.cors_origins],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-BACKEND_DIR = Path(__file__).resolve().parent
+# directories and URLs driven by configuration
+BACKEND_DIR = settings.backend_dir
 UPLOADS_DIR = BACKEND_DIR / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-MEDIA_BASE_URL = os.getenv("MEDIA_BASE_URL", "http://localhost:8000").rstrip("/")
+MEDIA_BASE_URL = str(settings.media_base_url).rstrip("/")
 
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
@@ -74,39 +108,21 @@ STATE_KEYS = {
     "support_messages": "support_messages",
 }
 
-EXTERNAL_TIMEOUT_SECONDS = 6
-LIVE_STOCK_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "AMD"]
-NOMINATIM_BASE_URL = os.getenv("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org").rstrip("/")
-OVERPASS_API_URL = os.getenv("OVERPASS_API_URL", "https://overpass-api.de/api/interpreter").strip()
-OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org").rstrip("/")
-OPENMETEO_BASE_URL = os.getenv("OPENMETEO_BASE_URL", "https://api.open-meteo.com/v1").rstrip("/")
-FRANKFURTER_API_URL = os.getenv("FRANKFURTER_API_URL", "https://api.frankfurter.app").rstrip("/")
-WORLDTIME_API_URL = os.getenv("WORLDTIME_API_URL", "https://worldtimeapi.org/api").rstrip("/")
-NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT", "UniHub/1.0")
+# configuration-driven constants
+EXTERNAL_TIMEOUT_SECONDS = settings.external_timeout
+LIVE_STOCK_SYMBOLS = settings.live_stock_symbols
+NOMINATIM_BASE_URL = str(settings.nominatim_base_url).rstrip("/")
+OVERPASS_API_URL = str(settings.overpass_api_url)
+OSRM_BASE_URL = str(settings.osrm_base_url).rstrip("/")
+OPENMETEO_BASE_URL = str(settings.openmeteo_base_url).rstrip("/")
+FRANKFURTER_API_URL = str(settings.frankfurter_api_url).rstrip("/")
+WORLDTIME_API_URL = str(settings.worldtime_api_url).rstrip("/")
+NOMINATIM_USER_AGENT = settings.nominatim_user_agent
 
-
-def _to_jsonable(value: Any) -> Any:
-    if isinstance(value, BaseModel):
-        return _to_jsonable(value.dict())
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, list):
-        return [_to_jsonable(item) for item in value]
-    if isinstance(value, dict):
-        return {str(key): _to_jsonable(item) for key, item in value.items()}
-    return value
 
 
 def _persist_state(key: str, value: Any) -> None:
-    set_state(key, _to_jsonable(value))
-
-
-def _now_iso() -> str:
-    return datetime.utcnow().isoformat()
-
-
-def _build_media_url(folder: str, filename: str) -> str:
-    return f"{MEDIA_BASE_URL}/uploads/{folder}/{filename}"
+    set_state(key, utils.to_jsonable(value))
 
 
 def _save_upload_file(upload: UploadFile, folder: str, allowed_prefixes: List[str]) -> str:
@@ -127,7 +143,7 @@ def _save_upload_file(upload: UploadFile, folder: str, allowed_prefixes: List[st
     with open(target_path, "wb") as handle:
         handle.write(upload.file.read())
 
-    return _build_media_url(folder, safe_name)
+    return utils.build_media_url(folder, safe_name, MEDIA_BASE_URL)
 
 
 def _message_to_payload(msg: Any) -> Dict[str, Any]:
@@ -142,29 +158,7 @@ def _message_to_payload(msg: Any) -> Dict[str, Any]:
     }
 
 
-class ChatConnectionManager:
-    def __init__(self) -> None:
-        self.active_connections: Dict[int, List[WebSocket]] = {}
-
-    async def connect(self, user_id: int, websocket: WebSocket) -> None:
-        await websocket.accept()
-        self.active_connections.setdefault(user_id, []).append(websocket)
-
-    def disconnect(self, user_id: int, websocket: WebSocket) -> None:
-        connections = self.active_connections.get(user_id, [])
-        if websocket in connections:
-            connections.remove(websocket)
-        if not connections and user_id in self.active_connections:
-            del self.active_connections[user_id]
-
-    async def send_to(self, user_id: int, payload: Dict[str, Any]) -> None:
-        for conn in list(self.active_connections.get(user_id, [])):
-            try:
-                await conn.send_json(payload)
-            except Exception:
-                self.disconnect(user_id, conn)
-
-
+# CHAT_WS_MANAGER remains as imported from chat module
 CHAT_WS_MANAGER = ChatConnectionManager()
 
 
@@ -226,7 +220,18 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return earth_radius_km * c
 
 
+# simple in‑memory cache for external stock fetches
+_last_stocks: List[Any] = []
+_last_stocks_ts: float = 0.0
+
+
 def _fetch_live_stocks() -> List[Any]:
+    global _last_stocks, _last_stocks_ts
+    now = time.time()
+    # reuse cached result for 5 seconds to avoid hammering Yahoo
+    if now - _last_stocks_ts < 5 and _last_stocks:
+        return _last_stocks
+
     symbols = ",".join(LIVE_STOCK_SYMBOLS)
     payload = _fetch_json(f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbols}")
     if not isinstance(payload, dict):
@@ -282,38 +287,15 @@ def _fetch_live_stocks() -> List[Any]:
             )
         )
 
+    _last_stocks = live_stocks
+    _last_stocks_ts = now
     return live_stocks
 
 
-def _calc_sma(values: List[float], period: int) -> List[Optional[float]]:
-    result: List[Optional[float]] = []
-    for idx in range(len(values)):
-        if idx + 1 < period:
-            result.append(None)
-            continue
-        window = values[idx + 1 - period : idx + 1]
-        result.append(sum(window) / period)
-    return result
+# _calc_sma has been replaced by utils.calc_sma
 
 
-def _calc_ema(values: List[float], period: int) -> List[Optional[float]]:
-    result: List[Optional[float]] = []
-    if not values:
-        return result
-
-    multiplier = 2 / (period + 1)
-    ema_prev: Optional[float] = None
-    for idx, value in enumerate(values):
-        if idx + 1 < period:
-            result.append(None)
-            continue
-        if ema_prev is None:
-            ema_prev = sum(values[:period]) / period
-            result.append(ema_prev)
-            continue
-        ema_prev = (value - ema_prev) * multiplier + ema_prev
-        result.append(ema_prev)
-    return result
+# _calc_ema has been replaced by utils.calc_ema
 
 
 def _calc_rsi(values: List[float], period: int = 14) -> List[Optional[float]]:
@@ -439,8 +421,8 @@ def _fetch_stock_chart(symbol: str, chart_range: str, interval: str) -> Dict[str
             }
         )
 
-    sma20 = _calc_sma(close_values, 20)
-    ema20 = _calc_ema(close_values, 20)
+    sma20 = utils.calc_sma(close_values, 20)
+    ema20 = utils.calc_ema(close_values, 20)
     rsi14 = _calc_rsi(close_values, 14)
 
     return {
@@ -457,7 +439,7 @@ def _fetch_stock_chart(symbol: str, chart_range: str, interval: str) -> Dict[str
 
 
 def _hydrate_model_list(key: str, model_cls: Any, default_items: List[Any]) -> List[Any]:
-    default_payload = _to_jsonable(default_items)
+    default_payload = utils.to_jsonable(default_items)
     raw_items = seed_state(key, default_payload)
     if not isinstance(raw_items, list):
         set_state(key, default_payload)
@@ -474,7 +456,7 @@ def _hydrate_model_list(key: str, model_cls: Any, default_items: List[Any]) -> L
 
 
 def _hydrate_model_dict(key: str, model_cls: Any, default_items: Dict[int, Any]) -> Dict[int, Any]:
-    default_payload = _to_jsonable(default_items)
+    default_payload = utils.to_jsonable(default_items)
     raw_items = seed_state(key, default_payload)
     if not isinstance(raw_items, dict):
         set_state(key, default_payload)
@@ -492,7 +474,7 @@ def _hydrate_model_dict(key: str, model_cls: Any, default_items: Dict[int, Any])
 
 
 def _hydrate_cart(default_cart: Dict[int, List[Any]]) -> Dict[int, List[Any]]:
-    default_payload = _to_jsonable(default_cart)
+    default_payload = utils.to_jsonable(default_cart)
     raw_cart = seed_state(STATE_KEYS["cart"], default_payload)
     if not isinstance(raw_cart, dict):
         set_state(STATE_KEYS["cart"], default_payload)
@@ -513,7 +495,7 @@ def _hydrate_cart(default_cart: Dict[int, List[Any]]) -> Dict[int, List[Any]]:
 
 
 def _hydrate_primitive_list(key: str, default_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    default_payload = _to_jsonable(default_items)
+    default_payload = utils.to_jsonable(default_items)
     raw_items = seed_state(key, default_payload)
     if not isinstance(raw_items, list):
         set_state(key, default_payload)
@@ -587,30 +569,10 @@ def _require_user_access(user_id: int, current_user: Dict[str, Any]) -> None:
         raise HTTPException(status_code=403, detail="Forbidden: user scope mismatch.")
 
 
-@app.on_event("startup")
-async def setup_auth_database() -> None:
-    init_auth_db()
-    init_state_db()
-    _hydrate_all_state()
-    _remove_legacy_seeded_mock_data()
-
-    # Ensure registered users from the auth DB are present in the in-memory USERS
-    try:
-        auth_users = get_all_users()
-        for u in auth_users:
-            uid = int(u.get("id", 0) or 0)
-            if uid and uid not in USERS:
-                username = str(u.get("username") or f"user_{uid}")
-                full_name = str(u.get("full_name") or username)
-                avatar = f"https://ui-avatars.com/api/?name={urllib.parse.quote(full_name)}&background=2563eb&color=ffffff"
-                USERS[uid] = User(id=uid, username=username, name=full_name, avatar=avatar, bio="", followers=0, following=0)
-        _persist_state(STATE_KEYS["users"], USERS)
-    except Exception:
-        # non-fatal: preserve previous behavior if auth DB cannot be read
-        pass
 
 
 app.include_router(auth_router)
+
 
 # Enums
 class OrderStatus(str, Enum):
@@ -920,9 +882,18 @@ async def get_user(user_id: int):
         raise HTTPException(status_code=404, detail="User not found")
     return profile
 
-@app.get("/users", response_model=List[User])
-async def list_users():
-    return list(USERS.values())
+@app.get("/users")
+async def list_users(page: int = 1, per_page: int = 20):
+    """Return paginated user profiles.
+
+    Response is a JSON object containing paging metadata and a list of
+    items so that the frontend can easily render page controls.
+    """
+    all_users = list(USERS.values())
+    total = len(all_users)
+    start = (page - 1) * per_page
+    end = start + per_page
+    return {"page": page, "per_page": per_page, "total": total, "items": all_users[start:end]}
 
 # Feed endpoints
 @app.get("/feed", response_model=List[Post])
@@ -948,7 +919,7 @@ async def create_post(
             image=payload.image,
             likes=0,
             comments=0,
-            timestamp=_now_iso(),
+            timestamp=utils.now_iso(),
         )
     )
     _persist_state(STATE_KEYS["posts"], POSTS)
@@ -997,7 +968,7 @@ async def send_message(
     new_id = max((m.id for m in MESSAGES), default=0) + 1
     sender_id = int(current_user["id"])
     sender_name = str(current_user.get("full_name") or current_user.get("username") or "User")
-    stamp = _now_iso()
+    stamp = utils.now_iso()
     MESSAGES.append(
         Message(
             id=new_id,
@@ -1126,7 +1097,7 @@ async def websocket_chat(user_id: int, websocket: WebSocket, token: str = Query(
                 continue
 
             new_id = max((m.id for m in MESSAGES), default=0) + 1
-            stamp = _now_iso()
+            stamp = utils.now_iso()
             sender_name = str(authed_user.get("full_name") or authed_user.get("username") or "User")
             message = Message(
                 id=new_id,
@@ -1263,7 +1234,7 @@ async def checkout(
         total_price=total,
         shipping_address=payload.address,
         status=OrderStatus.PENDING,
-        created_at=_now_iso(),
+        created_at=utils.now_iso(),
         estimated_delivery="3-5 business days"
     )
     ORDERS.append(order)
@@ -1403,7 +1374,7 @@ async def get_watchlists(user_id: int, current_user: Dict[str, Any] = Depends(ge
 async def create_watchlist(user_id: int, name: str, current_user: Dict[str, Any] = Depends(get_current_user)):
     _require_user_access(user_id, current_user)
     new_id = max((w.id for w in WATCHLISTS), default=0) + 1
-    watchlist = Watchlist(id=new_id, user_id=user_id, name=name, created_at=_now_iso(), items=[])
+    watchlist = Watchlist(id=new_id, user_id=user_id, name=name, created_at=utils.now_iso(), items=[])
     WATCHLISTS.append(watchlist)
     _persist_state(STATE_KEYS["watchlists"], WATCHLISTS)
     return {"success": True, "watchlist_id": new_id}
@@ -1445,7 +1416,7 @@ async def execute_buy_trade(
         quantity=quantity,
         price=price,
         total_amount=total,
-        timestamp=_now_iso(),
+        timestamp=utils.now_iso(),
         asset_type=asset_type
     )
     TRADES.append(trade)
@@ -1481,7 +1452,7 @@ async def execute_sell_trade(
         quantity=quantity,
         price=price,
         total_amount=total,
-        timestamp=_now_iso(),
+        timestamp=utils.now_iso(),
         asset_type=asset_type
     )
     TRADES.append(trade)
@@ -1619,7 +1590,7 @@ def _get_or_create_wallet(user_id: int) -> Dict[str, Any]:
         "balance": 0.0,
         "total_spent": 0.0,
         "total_earned": 0.0,
-        "created_at": _now_iso(),
+        "created_at": utils.now_iso(),
     }
     WALLETS.append(wallet)
     _persist_state(STATE_KEYS["wallets"], WALLETS)
@@ -1668,7 +1639,7 @@ async def add_product_community_review(product_id: int, user_id: int, username: 
         "rating": rating,
         "comment": comment,
         "helpful_count": 0,
-        "created_at": _now_iso(),
+        "created_at": utils.now_iso(),
     }
     REVIEWS.append(review)
     _persist_state(STATE_KEYS["reviews"], REVIEWS)
@@ -1705,7 +1676,7 @@ async def add_to_wishlist(
     _require_user_access(user_id, current_user)
     if not any(w["user_id"] == user_id and w["product_id"] == product_id for w in WISHLISTS):
         new_id = max((int(w["id"]) for w in WISHLISTS), default=0) + 1
-        wishlist = {"id": new_id, "user_id": user_id, "product_id": product_id, "added_at": _now_iso()}
+        wishlist = {"id": new_id, "user_id": user_id, "product_id": product_id, "added_at": utils.now_iso()}
         WISHLISTS.append(wishlist)
         _persist_state(STATE_KEYS["wishlists"], WISHLISTS)
         return {"success": True, "wishlist_id": new_id}
@@ -1787,7 +1758,7 @@ async def send_chat_message(
         "user_id": user_id,
         "seller_id": seller_id,
         "message": payload.message,
-        "timestamp": _now_iso(),
+        "timestamp": utils.now_iso(),
         "read": False,
     }
     CHAT_MESSAGES.append(msg)
@@ -1814,7 +1785,7 @@ async def follow_user(
     _require_user_access(follower_id, current_user)
     if not any(f["follower_id"] == follower_id and f["following_id"] == following_id for f in FOLLOWS):
         new_id = max((int(f["id"]) for f in FOLLOWS), default=0) + 1
-        follow = {"id": new_id, "follower_id": follower_id, "following_id": following_id, "created_at": _now_iso()}
+        follow = {"id": new_id, "follower_id": follower_id, "following_id": following_id, "created_at": utils.now_iso()}
         FOLLOWS.append(follow)
         _persist_state(STATE_KEYS["follows"], FOLLOWS)
         return {"success": True, "follow_id": new_id}
